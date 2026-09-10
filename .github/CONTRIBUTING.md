@@ -7,7 +7,7 @@ This document is how work lands in the repositories of Endgrain Labs LLC.
 - Branch, then open a pull request; never commit to the default branch.
 - Pull requests are squash-merged. Add commits on top; never amend or force-push a branch under review.
 - Commit subjects follow the conventional form: `type(scope): subject`.
-- A pull request states what it changes, what proves it (tests, scripts, a run against a cluster), and whether a pre-merge adversarial review was run or skipped, with the reason.
+- A pull request states what it changes, how it was tested (unit tests, scripts, a run against a cluster), and whether a security review was run or skipped, with the reason.
 
 ## AI coding assistants
 
@@ -29,8 +29,8 @@ Never include links to AI sessions or conversation transcripts in commits or pul
 
 ## Code and comments
 
-- Comments state the why the code cannot show, in a line or two. Rationale belongs in the design record or the pull request.
-- No pull request numbers, milestone names, or references to private working documents in code or comments.
+- Comments state the why the code cannot show, in a line or two. Rationale belongs in the pull request.
+- No pull request numbers in code or comments.
 - Generated code is committed and regenerated, never hand-edited.
 
 ## License

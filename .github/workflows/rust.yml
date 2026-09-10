@@ -1,0 +1,25 @@
+name: rust
+
+# Runs on demand from a branch before merge, not on every push.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust-inventory
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # rustup reads rust-inventory/rust-toolchain.toml, so the channel and its
+      # components come from the repository, not from the runner image.
+      - run: rustup show
+      - run: cargo fmt --check
+      - run: cargo clippy -- -D warnings
+      - run: cargo test

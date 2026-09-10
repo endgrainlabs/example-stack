@@ -1,0 +1,8 @@
+# Scenario 3: price items whose identifier ends in 002 (Gadget, the west
+# warehouse item) in EUR. go-grpc stays healthy and proto-compliant; go-api
+# assumes USD and rejects anything else with 422.
+- op: add
+  path: /spec/template/spec/containers/0/env/-
+  value:
+    name: REGIONAL_PRICING
+    value: "002=EUR"

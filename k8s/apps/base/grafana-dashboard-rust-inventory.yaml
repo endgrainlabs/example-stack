@@ -1,0 +1,149 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-rust-inventory
+  namespace: example-stack
+  labels:
+    grafana_dashboard: "1"
+data:
+  rust-inventory.json: |
+    {
+      "annotations": { "list": [] },
+      "description": "rust-inventory service metrics",
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "links": [],
+      "panels": [
+        {
+          "title": "Request Rate",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "targets": [
+            {
+              "expr": "sum(rate(rustinventory_http_requests_total[5m])) by (endpoint)",
+              "legendFormat": "{{ endpoint }}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": { "drawStyle": "line", "fillOpacity": 10 }
+            }
+          }
+        },
+        {
+          "title": "Error Rate",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "targets": [
+            {
+              "expr": "rustinventory:http_error_rate:5m",
+              "legendFormat": "5xx error rate"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "custom": { "drawStyle": "line", "fillOpacity": 10 },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 0.01 },
+                  { "color": "red", "value": 0.05 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "title": "Latency Percentiles",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "targets": [
+            {
+              "expr": "rustinventory:http_latency_p50:5m",
+              "legendFormat": "p50"
+            },
+            {
+              "expr": "rustinventory:http_latency_p90:5m",
+              "legendFormat": "p90"
+            },
+            {
+              "expr": "rustinventory:http_latency_p99:5m",
+              "legendFormat": "p99"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": { "drawStyle": "line", "fillOpacity": 10 }
+            }
+          }
+        },
+        {
+          "title": "Mean Latency",
+          "type": "stat",
+          "gridPos": { "h": 8, "w": 6, "x": 12, "y": 8 },
+          "targets": [
+            {
+              "expr": "sum(rate(rustinventory_http_requests_duration_seconds_sum[5m])) / clamp_min(sum(rate(rustinventory_http_requests_duration_seconds_count[5m])), 1e-10)",
+              "legendFormat": "mean"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 0.25 },
+                  { "color": "red", "value": 0.5 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "title": "Request Rate by Status",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 6, "x": 18, "y": 8 },
+          "targets": [
+            {
+              "expr": "sum(rate(rustinventory_http_requests_total[5m])) by (status)",
+              "legendFormat": "{{ status }}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": { "drawStyle": "bars", "fillOpacity": 50, "stacking": { "mode": "normal" } }
+            }
+          }
+        },
+        {
+          "title": "Latency Heatmap",
+          "type": "heatmap",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+          "targets": [
+            {
+              "expr": "sum(increase(rustinventory_http_requests_duration_seconds_bucket[1m])) by (le)",
+              "format": "heatmap",
+              "legendFormat": "{{ le }}"
+            }
+          ],
+          "options": {
+            "calculate": false,
+            "yAxis": { "unit": "s" }
+          }
+        }
+      ],
+      "schemaVersion": 39,
+      "tags": ["example-stack", "rust-inventory"],
+      "templating": { "list": [] },
+      "time": { "from": "now-30m", "to": "now" },
+      "title": "rust-inventory",
+      "uid": "example-stack-rust-inventory"
+    }

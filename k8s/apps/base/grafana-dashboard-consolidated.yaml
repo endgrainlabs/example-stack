@@ -1,0 +1,279 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-consolidated
+  namespace: example-stack
+  labels:
+    grafana_dashboard: "1"
+data:
+  example-stack.json: |
+    {
+      "annotations": { "list": [] },
+      "description": "Consolidated view of all example services, infrastructure health, and success rate against the service level objectives",
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 2,
+      "links": [
+        { "title": "go-api", "url": "/d/example-stack-go-api", "type": "link" },
+        { "title": "go-grpc", "url": "/d/example-stack-go-grpc", "type": "link" },
+        { "title": "rust-inventory", "url": "/d/example-stack-rust-inventory", "type": "link" }
+      ],
+      "panels": [
+        {
+          "title": "Service level objectives",
+          "type": "row",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+          "collapsed": false
+        },
+        {
+          "title": "go-api Error Budget",
+          "type": "gauge",
+          "gridPos": { "h": 6, "w": 8, "x": 0, "y": 1 },
+          "targets": [
+            {
+              "expr": "1 - goapi:http_error_rate:5m",
+              "legendFormat": "availability"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "min": 0.9,
+              "max": 1,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "yellow", "value": 0.95 },
+                  { "color": "green", "value": 0.99 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "title": "go-grpc Error Budget",
+          "type": "gauge",
+          "gridPos": { "h": 6, "w": 8, "x": 8, "y": 1 },
+          "targets": [
+            {
+              "expr": "1 - gogrpc:grpc_error_rate:5m",
+              "legendFormat": "availability"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "min": 0.9,
+              "max": 1,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "yellow", "value": 0.95 },
+                  { "color": "green", "value": 0.99 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "title": "rust-inventory Error Budget",
+          "type": "gauge",
+          "gridPos": { "h": 6, "w": 8, "x": 16, "y": 1 },
+          "targets": [
+            {
+              "expr": "1 - rustinventory:http_error_rate:5m",
+              "legendFormat": "availability"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "min": 0.9,
+              "max": 1,
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "red", "value": null },
+                  { "color": "yellow", "value": 0.95 },
+                  { "color": "green", "value": 0.99 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "title": "Request Rate",
+          "type": "row",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 7 },
+          "collapsed": false
+        },
+        {
+          "title": "go-api",
+          "type": "timeseries",
+          "gridPos": { "h": 7, "w": 8, "x": 0, "y": 8 },
+          "targets": [
+            {
+              "expr": "goapi:http_request_rate:5m",
+              "legendFormat": "req/s"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": { "drawStyle": "line", "fillOpacity": 10 }
+            }
+          }
+        },
+        {
+          "title": "go-grpc",
+          "type": "timeseries",
+          "gridPos": { "h": 7, "w": 8, "x": 8, "y": 8 },
+          "targets": [
+            {
+              "expr": "gogrpc:grpc_request_rate:5m",
+              "legendFormat": "rpc/s"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": { "drawStyle": "line", "fillOpacity": 10 }
+            }
+          }
+        },
+        {
+          "title": "rust-inventory",
+          "type": "timeseries",
+          "gridPos": { "h": 7, "w": 8, "x": 16, "y": 8 },
+          "targets": [
+            {
+              "expr": "rustinventory:http_request_rate:5m",
+              "legendFormat": "req/s"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": { "drawStyle": "line", "fillOpacity": 10 }
+            }
+          }
+        },
+        {
+          "title": "Latency (p99)",
+          "type": "row",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 15 },
+          "collapsed": false
+        },
+        {
+          "title": "p99 Latency Comparison",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+          "targets": [
+            {
+              "expr": "goapi:http_latency_p99:5m",
+              "legendFormat": "go-api"
+            },
+            {
+              "expr": "gogrpc:grpc_latency_p99:5m",
+              "legendFormat": "go-grpc"
+            },
+            {
+              "expr": "rustinventory:http_latency_p99:5m",
+              "legendFormat": "rust-inventory"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": { "drawStyle": "line", "fillOpacity": 10 },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "red", "value": 0.5 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "title": "Infrastructure Health",
+          "type": "row",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 24 },
+          "collapsed": false
+        },
+        {
+          "title": "Deployment Replicas",
+          "type": "table",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 25 },
+          "targets": [
+            {
+              "expr": "kube_deployment_spec_replicas{namespace=\"example-stack\"}",
+              "legendFormat": "{{ deployment }} desired",
+              "format": "table",
+              "instant": true
+            },
+            {
+              "expr": "kube_deployment_status_ready_replicas{namespace=\"example-stack\"}",
+              "legendFormat": "{{ deployment }} ready",
+              "format": "table",
+              "instant": true
+            }
+          ],
+          "transformations": [
+            {
+              "id": "merge"
+            }
+          ]
+        },
+        {
+          "title": "Pod Restarts",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 25 },
+          "targets": [
+            {
+              "expr": "increase(kube_pod_container_status_restarts_total{namespace=\"example-stack\"}[5m])",
+              "legendFormat": "{{ pod }}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "bars", "fillOpacity": 50 }
+            }
+          }
+        },
+        {
+          "title": "Alerts",
+          "type": "row",
+          "gridPos": { "h": 1, "w": 24, "x": 0, "y": 33 },
+          "collapsed": false
+        },
+        {
+          "title": "Active Alerts",
+          "type": "alertlist",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 34 },
+          "options": {
+            "alertInstanceLabelFilter": "{namespace=\"example-stack\"}",
+            "alertName": "",
+            "dashboardAlerts": false,
+            "maxItems": 20,
+            "sortOrder": 1,
+            "stateFilter": {
+              "error": true,
+              "firing": true,
+              "noData": false,
+              "normal": false,
+              "pending": true
+            }
+          }
+        }
+      ],
+      "schemaVersion": 39,
+      "tags": ["example-stack", "consolidated"],
+      "templating": { "list": [] },
+      "time": { "from": "now-30m", "to": "now" },
+      "title": "example-stack",
+      "uid": "example-stack-consolidated"
+    }

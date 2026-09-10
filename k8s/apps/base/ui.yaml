@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ui
+  namespace: example-stack
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ui
+  template:
+    metadata:
+      labels:
+        app: ui
+    spec:
+      containers:
+        - name: nginx
+          image: docker.io/library/nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de
+          ports:
+            - name: http
+              containerPort: 80
+          env:
+            - name: API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: example-secrets
+                  key: api-token
+            # The image renders /etc/nginx/templates/*.template with envsubst
+            # at startup. Writing the result to /etc/nginx turns
+            # nginx.conf.template into the nginx.conf it then reads, so the
+            # bearer token comes from the Secret and is not a second copy of
+            # it checked in beside the manifests.
+            - name: NGINX_ENVSUBST_OUTPUT_DIR
+              value: /etc/nginx
+          volumeMounts:
+            - name: content
+              mountPath: /usr/share/nginx/html
+              readOnly: true
+            - name: nginx-template
+              mountPath: /etc/nginx/templates
+              readOnly: true
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+      volumes:
+        - name: content
+          configMap:
+            name: ui-content
+        - name: nginx-template
+          configMap:
+            name: ui-nginx-conf
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ui
+  namespace: example-stack
+spec:
+  selector:
+    app: ui
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80

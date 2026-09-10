@@ -1,0 +1,29 @@
+# Scenario 2: a second inventory migration Job. goose records what it has
+# applied, so this Job runs only the migration the overlay adds; 001 and 002
+# are already in the database.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate-inventory-v2
+  namespace: example-stack
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: migrate
+        database: inventory
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: example-stack-registry:5000/example-stack/migrate:latest
+          imagePullPolicy: Always
+          args: ["-dir", "inventory"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: example-secrets
+                  key: postgres-dsn

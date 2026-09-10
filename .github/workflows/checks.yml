@@ -1,32 +1,48 @@
 name: checks
 
+# Dispatched, never triggered: run it against a branch before merge with
+# `gh workflow run checks.yml --ref <branch>`. Nothing runs on push.
 on:
-  pull_request:
-  push:
-    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   go:
-    if: ${{ hashFiles('**/go.mod') != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # hashFiles is available on steps, not on jobs, so each language gates
+      # its own steps after checkout. A repository without that language
+      # skips them.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        if: hashFiles('**/go.mod') != ''
         with:
           go-version-file: go.mod
-      - run: test -z "$(gofmt -l .)"
-      - run: go vet ./...
-      - run: go test ./...
+      - if: hashFiles('**/go.mod') != ''
+        run: test -z "$(gofmt -l .)"
+      - if: hashFiles('**/go.mod') != ''
+        run: go vet ./...
+      - if: hashFiles('**/go.mod') != ''
+        run: go test ./...
 
   node:
-    if: ${{ hashFiles('**/package-lock.json') != '' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: hashFiles('**/package-lock.json') != ''
         with:
           node-version-file: .nvmrc
           cache: npm
-      - run: npm ci
-      - run: npm run typecheck --if-present
-      - run: npm test
+      - if: hashFiles('**/package-lock.json') != ''
+        run: npm ci
+      - if: hashFiles('**/package-lock.json') != ''
+        run: npm run typecheck --if-present
+      - if: hashFiles('**/package-lock.json') != ''
+        run: npm test

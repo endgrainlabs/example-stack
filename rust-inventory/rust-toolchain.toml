@@ -1,0 +1,5 @@
+# Pins the toolchain so cargo fmt and clippy give the same answer locally, in
+# the pre-commit hook, and in the rust workflow.
+[toolchain]
+channel = "1.94.1"
+components = ["rustfmt", "clippy"]

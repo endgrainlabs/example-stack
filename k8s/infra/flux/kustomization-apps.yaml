@@ -1,0 +1,16 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps
+  namespace: flux-system
+spec:
+  interval: 2m
+  dependsOn:
+    - name: monitoring
+  sourceRef:
+    kind: GitRepository
+    name: example-stack
+  path: ./k8s/apps/base
+  prune: true
+  wait: true
+  timeout: 5m

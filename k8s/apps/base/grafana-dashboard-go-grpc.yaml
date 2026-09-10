@@ -1,0 +1,125 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-go-grpc
+  namespace: example-stack
+  labels:
+    grafana_dashboard: "1"
+data:
+  go-grpc.json: |
+    {
+      "annotations": { "list": [] },
+      "description": "go-grpc service metrics",
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "links": [],
+      "panels": [
+        {
+          "title": "RPC Rate",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "targets": [
+            {
+              "expr": "sum(rate(grpc_server_handled_total[5m])) by (grpc_method)",
+              "legendFormat": "{{ grpc_method }}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": { "drawStyle": "line", "fillOpacity": 10 }
+            }
+          }
+        },
+        {
+          "title": "Error Rate",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "targets": [
+            {
+              "expr": "gogrpc:grpc_error_rate:5m",
+              "legendFormat": "non-OK rate"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "custom": { "drawStyle": "line", "fillOpacity": 10 },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 0.01 },
+                  { "color": "red", "value": 0.05 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "title": "Latency Percentiles",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "targets": [
+            {
+              "expr": "gogrpc:grpc_latency_p50:5m",
+              "legendFormat": "p50"
+            },
+            {
+              "expr": "gogrpc:grpc_latency_p90:5m",
+              "legendFormat": "p90"
+            },
+            {
+              "expr": "gogrpc:grpc_latency_p99:5m",
+              "legendFormat": "p99"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": { "drawStyle": "line", "fillOpacity": 10 }
+            }
+          }
+        },
+        {
+          "title": "RPCs by Status Code",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+          "targets": [
+            {
+              "expr": "sum(rate(grpc_server_handled_total[5m])) by (grpc_code)",
+              "legendFormat": "{{ grpc_code }}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": { "drawStyle": "bars", "fillOpacity": 50, "stacking": { "mode": "normal" } }
+            }
+          }
+        },
+        {
+          "title": "Latency Heatmap",
+          "type": "heatmap",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+          "targets": [
+            {
+              "expr": "sum(increase(grpc_server_handling_seconds_bucket[1m])) by (le)",
+              "format": "heatmap",
+              "legendFormat": "{{ le }}"
+            }
+          ],
+          "options": {
+            "calculate": false,
+            "yAxis": { "unit": "s" }
+          }
+        }
+      ],
+      "schemaVersion": 39,
+      "tags": ["example-stack", "go-grpc"],
+      "templating": { "list": [] },
+      "time": { "from": "now-30m", "to": "now" },
+      "title": "go-grpc",
+      "uid": "example-stack-go-grpc"
+    }

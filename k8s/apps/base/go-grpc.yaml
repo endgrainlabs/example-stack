@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: go-grpc
+  namespace: example-stack
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: go-grpc
+  template:
+    metadata:
+      labels:
+        app: go-grpc
+    spec:
+      containers:
+        - name: go-grpc
+          image: example-stack-registry:5000/example-stack/go-grpc:latest
+          imagePullPolicy: Always
+          ports:
+            - name: grpc
+              containerPort: 9090
+            - name: metrics
+              containerPort: 9091
+          env:
+            - name: API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: example-secrets
+                  key: api-token
+            - name: LISTEN_ADDR
+              value: ":9090"
+            - name: METRICS_ADDR
+              value: ":9091"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: go-grpc
+  namespace: example-stack
+  labels:
+    app: go-grpc
+spec:
+  selector:
+    app: go-grpc
+  ports:
+    - name: grpc
+      port: 9090
+      targetPort: 9090
+    - name: metrics
+      port: 9091
+      targetPort: 9091
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: go-grpc
+  namespace: example-stack
+  labels:
+    app: go-grpc
+spec:
+  selector:
+    matchLabels:
+      app: go-grpc
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 15s

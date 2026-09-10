@@ -1,0 +1,13 @@
+-- +goose Up
+INSERT INTO inventory (id, name, quantity, warehouse) VALUES
+    ('a0000000-0000-0000-0000-000000000001', 'Widget', 100, 'east'),
+    ('a0000000-0000-0000-0000-000000000002', 'Gadget', 50, 'west'),
+    ('a0000000-0000-0000-0000-000000000003', 'Sprocket', 200, 'east')
+ON CONFLICT (id) DO NOTHING;
+
+-- +goose Down
+DELETE FROM inventory WHERE id IN (
+    'a0000000-0000-0000-0000-000000000001',
+    'a0000000-0000-0000-0000-000000000002',
+    'a0000000-0000-0000-0000-000000000003'
+);
