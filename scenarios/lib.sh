@@ -121,7 +121,14 @@ scenario_open_forgejo() {
     echo "==> Port-forwarding Forgejo"
     kubectl -n "${FORGEJO_NS}" port-forward "svc/forgejo" "${FORGEJO_PF_PORT}:3000" &>/dev/null &
     FORGEJO_PF_PID=$!
-    sleep 2
+    # The forward answers within a second on an idle machine and several on a
+    # busy one, so it is polled rather than waited for by a fixed sleep.
+    for _ in $(seq 1 40); do
+        if curl -s -o /dev/null --max-time 1 "http://localhost:${FORGEJO_PF_PORT}/" 2>/dev/null; then
+            break
+        fi
+        sleep 0.5
+    done
 
     WORK_DIR=$(mktemp -d)
     cd "${WORK_DIR}" || exit 1

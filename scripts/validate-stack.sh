@@ -151,10 +151,25 @@ cleanup_pf() {
 }
 trap cleanup_pf EXIT
 
+# A port-forward answers a few hundred milliseconds after it starts on an
+# idle machine and several seconds on one still loading images, so each
+# forwarded port is polled until it accepts a request.
+wait_for_port() {
+    local port="$1"
+    for _ in $(seq 1 40); do
+        if curl -s -o /dev/null --max-time 1 "http://localhost:${port}/" 2>/dev/null; then
+            return 0
+        fi
+        sleep 0.5
+    done
+    echo "  WARN  port-forward on ${port} not answering after 20s" >&2
+    return 1
+}
+
 kubectl -n "${NAMESPACE}" port-forward svc/go-api 18080:8080 &>/dev/null &
 kubectl -n "${NAMESPACE}" port-forward svc/go-grpc 19091:9091 &>/dev/null &
 kubectl -n "${NAMESPACE}" port-forward svc/rust-inventory 18081:8081 &>/dev/null &
-sleep 2
+wait_for_port 18080; wait_for_port 19091; wait_for_port 18081
 
 check_url "go-api /metrics" "http://localhost:18080/metrics"
 check_url "go-grpc /metrics" "http://localhost:19091/metrics"

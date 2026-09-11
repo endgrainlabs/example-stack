@@ -48,11 +48,28 @@ trap cleanup EXIT
 
 # --- Port forwards ---
 
+# A port-forward answers a few hundred milliseconds after it starts on an
+# idle machine and several seconds on one still loading images, so each
+# forwarded port is polled until it accepts a request.
+wait_for_port() {
+    local port="$1"
+    for _ in $(seq 1 40); do
+        if curl -s -o /dev/null --max-time 1 "http://localhost:${port}/" 2>/dev/null; then
+            return 0
+        fi
+        sleep 0.5
+    done
+    echo "  WARN  port-forward on ${port} not answering after 20s" >&2
+    return 1
+}
+
 kubectl -n "${NAMESPACE}" port-forward svc/go-api 18080:8080 &>/dev/null &
 kubectl -n "${NAMESPACE}" port-forward svc/rust-inventory 18081:8081 &>/dev/null &
 kubectl -n "${NAMESPACE}" port-forward svc/go-grpc 19090:9090 &>/dev/null &
 kubectl -n "${NAMESPACE}" port-forward svc/ui 18082:80 &>/dev/null &
-sleep 2
+# go-grpc speaks HTTP/2 only; its port is opened by the forward like the
+# others and answers the gRPC checks below.
+wait_for_port 18080; wait_for_port 18081; wait_for_port 18082
 
 # --- Helper ---
 
