@@ -34,6 +34,16 @@ Install [podman](https://podman.io/docs/installation),
 and `unzip`. macOS and Linux are the supported platforms; a minimal Linux
 install may need one or more of those four added.
 
+k3d drives podman through the Docker API socket, and a fresh podman install
+does not point k3d at it. On macOS, either run `sudo podman-mac-helper install`
+once, which links `/var/run/docker.sock` to the machine's socket, or export
+`DOCKER_HOST=unix://` followed by the path that
+`podman machine inspect --format '{{.ConnectionInfo.PodmanSocket.Path}}'`
+prints. On Linux, enable the socket with
+`systemctl --user enable --now podman.socket` and export
+`DOCKER_HOST=unix://$XDG_RUNTIME_DIR/podman/podman.sock`. `setup.sh` checks
+this before building anything and prints these steps if k3d cannot connect.
+
 No `helm` or `flux` command line tool is needed: Flux is installed from a pinned
 upstream manifest, and the monitoring stack is a `HelmRelease` that Flux
 reconciles inside the cluster. No `protoc` either: `scripts/build.sh` downloads
@@ -52,11 +62,18 @@ images, and `prometheus-community.github.io` for the kube-prometheus-stack
 chart, whose own images come from the registries the chart names. Nothing
 leaves the cluster after that.
 
-The bring-up needs a podman machine with at least 4 GiB of memory; with 4 CPUs
-the first run finishes in under ten minutes and a re-run in under two. `setup.sh`
-checks for every command above, and for a running machine of that size, before
-it builds anything, and names what is missing. The first run takes several
-minutes because the kube-prometheus-stack images are large.
+Measured on a podman machine with 4 CPUs and 8 GiB of memory: the stack's
+containers peak just under 3 GiB of memory together during bring-up, the two
+k3s nodes each burst past a full core while the images load, the first run
+takes under ten minutes from nothing and about six with the images already
+built, and a re-run reconciles in under two. The cluster occupies about 5 GiB
+of the machine's disk while it is up and releases it at teardown; what
+teardown keeps, the built images and the k3s image, is under 1 GiB, plus the
+Go and Rust build caches podman holds between builds. `setup.sh` enforces a
+floor of 4 GiB of memory, the smallest machine that leaves that peak headroom,
+and before it builds anything checks for every command above, a running
+machine of that size, and a reachable engine socket, and says which check
+failed if it stops.
 
 ## Bring-up and teardown
 

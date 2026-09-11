@@ -172,6 +172,24 @@ mark() {
 # Everything below needs these. Checking first costs a couple of seconds;
 # finding out in phase C costs a half-built cluster.
 
+# k3d drives the container engine through the Docker API socket. podman
+# serves one, but on a fresh install nothing points k3d at it, and the
+# failure would otherwise surface at cluster creation, after the images
+# are built.
+check_engine_socket() {
+    if k3d node list >/dev/null 2>&1; then
+        echo "    k3d reaches the container engine"
+        return 0
+    fi
+    echo "ERROR: k3d cannot reach the container engine through the Docker API socket" >&2
+    echo "       Point it at podman's socket:" >&2
+    echo "         macOS:  export DOCKER_HOST=unix://\$(podman machine inspect --format '{{.ConnectionInfo.PodmanSocket.Path}}')" >&2
+    echo "                 or run 'sudo podman-mac-helper install' once, which links /var/run/docker.sock to it" >&2
+    echo "         Linux:  systemctl --user enable --now podman.socket" >&2
+    echo "                 export DOCKER_HOST=unix://\${XDG_RUNTIME_DIR}/podman/podman.sock" >&2
+    exit 1
+}
+
 preflight() {
     local missing="" cmd state memory
     for cmd in podman k3d kubectl go curl git python3 unzip; do
@@ -189,12 +207,14 @@ preflight() {
     state=$(podman machine inspect --format '{{.State}}' 2>/dev/null | head -1 || true)
     if [ -z "${state}" ]; then
         echo "    No podman machine configured, podman runs containers directly"
+        check_engine_socket
         return 0
     fi
     if [ "${state}" != "running" ]; then
         echo "ERROR: the podman machine is ${state}; start it with 'podman machine start'" >&2
         exit 1
     fi
+    check_engine_socket
 
     memory=$(podman machine inspect --format '{{.Resources.Memory}}' 2>/dev/null | head -1 || true)
     case "${memory}" in
