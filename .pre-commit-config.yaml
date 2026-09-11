@@ -32,3 +32,13 @@ repos:
         language: system
         files: ^rust-inventory/
         pass_filenames: false
+
+      # shellcheck and actionlint from the pins in the Makefile. semgrep is
+      # not in the hook: it starts a container and fetches its rules, which
+      # is too slow and too network-bound for every commit. `make lint` runs
+      # it by hand, and the workflow runs it on dispatch.
+      - id: lint
+        name: shellcheck and actionlint
+        entry: make shellcheck actionlint
+        language: system
+        pass_filenames: false

@@ -152,6 +152,9 @@ func main() {
 	}
 
 	log.Printf("go-api listening on %s", addr)
+	// Plain HTTP by design: the stack's ingress is HTTP-only and the
+	// cluster is local. Nothing here carries a credential worth a certificate.
+	// nosemgrep: go.lang.security.audit.net.use-tls.use-tls
 	log.Fatal(http.ListenAndServe(addr, newRouter(a)))
 }
 

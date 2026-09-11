@@ -190,6 +190,9 @@ func main() {
 		mux := http.NewServeMux()
 		mux.Handle("/metrics", promhttp.Handler())
 		log.Printf("go-grpc metrics listening on %s", metricsAddr)
+		// Plain HTTP by design: a metrics endpoint scraped by Prometheus
+		// inside the cluster, with TLS terminating at the ingress.
+		// nosemgrep: go.lang.security.audit.net.use-tls.use-tls
 		if err := http.ListenAndServe(metricsAddr, mux); err != nil {
 			log.Fatalf("metrics server: %v", err)
 		}

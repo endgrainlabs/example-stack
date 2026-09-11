@@ -28,6 +28,10 @@ jobs:
         run: go vet ./...
       - if: hashFiles('**/go.mod') != ''
         run: go test ./...
+      # Static checks that need no cluster: shellcheck and actionlint from
+      # the pins in the Makefile, semgrep from its digest-pinned container
+      # through the runner's docker. CI is set here, so a skip fails.
+      - run: make lint
 
   node:
     runs-on: ubuntu-latest

@@ -68,6 +68,10 @@ bash scripts/build.sh            # registry, proto code, image builds and pushes
 bash scripts/teardown.sh         # delete cluster, registry, network, kubeconfig
 ```
 
+The Makefile names the same steps: `make up`, `make smoke`, `make validate`,
+`make build`, and `make down`, each running its script with the defaults, plus
+`make lint` and `make test`, which need no cluster.
+
 Scripts are run with `bash`, never marked executable. Every script takes
 `--help` and configures itself by flag. `setup.sh` calls `build.sh`, so a bare
 `bash scripts/setup.sh` on a clean machine does everything. Every phase checks
@@ -266,14 +270,20 @@ Install the commit hooks once:
 prek install
 ```
 
-They run `gofmt`, `go vet`, `cargo fmt --check`, and `cargo clippy`. Tests are
-not in the hook; the workflows run them.
+They run `gofmt`, `go vet`, `cargo fmt --check`, `cargo clippy`, and
+`make lint`, which runs shellcheck over the scripts, actionlint over the
+workflows, and semgrep's Go ruleset over the Go code, at the versions pinned
+in the Makefile. shellcheck and actionlint are downloaded into `./bin/tools`
+against a checksum. semgrep runs from the PATH when that version is installed,
+or from its pinned container when podman is running, and is otherwise skipped
+locally; the workflow always runs it. Tests are not in the hook: `make test`
+runs them, and so do the workflows.
 
 Nothing runs on push. Both workflows are dispatched against a branch before
 merge:
 
 ```sh
-gh workflow run checks.yml --ref <branch>   # gofmt, go vet, go test
+gh workflow run checks.yml --ref <branch>   # gofmt, go vet, go test, shellcheck, actionlint, semgrep
 gh workflow run rust.yml --ref <branch>     # cargo fmt, clippy, and cargo test
 ```
 

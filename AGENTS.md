@@ -4,7 +4,7 @@ This repository is the reference environment of Endgrain Labs: a small distribut
 
 ## Build and test
 
-- `go build ./...`, `go vet ./...`, `go test ./...` at the repository root, and `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test` in `rust-inventory/`. These need no permission.
+- `go build ./...`, `go vet ./...`, `go test ./...` at the repository root, `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test` in `rust-inventory/`, and `make lint` for shellcheck, actionlint, and semgrep at the versions pinned in the Makefile (`make test` runs the Go and Rust tests). These need no permission and no cluster.
 - The tests need no database and no cluster: the Go tests fake `go-api`'s backends and its database, and `cargo test` runs the `rust-inventory` handlers that answer before a query. Behavior that needs a live stack belongs in `scripts/smoke-test.sh` or in a scenario driver's `--verify`.
 - `bash scripts/setup.sh` brings the cluster up and `bash scripts/teardown.sh` destroys it. These, `scripts/build.sh`, and the scenario drivers need podman, k3d, and a cluster, so ask first.
 - `scripts/build.sh` regenerates the proto code before building images. It needs no preinstalled protoc: it downloads a pinned one into `./bin/tools` against a checksum and builds the plugins from the `tool` directives in `go.mod`.
