@@ -1,0 +1,21 @@
+# Scenario 2: point the migration Job at the breaking migration. The stock
+# migrate image applies its embedded migrations first and then everything in
+# -extra-dir, so the scenario needs no image of its own.
+- op: add
+  path: /spec/template/spec/containers/0/args/-
+  value: "-extra-dir"
+- op: add
+  path: /spec/template/spec/containers/0/args/-
+  value: "/extra-migrations"
+- op: add
+  path: /spec/template/spec/containers/0/volumeMounts
+  value:
+    - name: extra-migrations
+      mountPath: /extra-migrations
+      readOnly: true
+- op: add
+  path: /spec/template/spec/volumes
+  value:
+    - name: extra-migrations
+      configMap:
+        name: scenario-2-migrations

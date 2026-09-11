@@ -1,0 +1,10 @@
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: example-stack
+  namespace: flux-system
+spec:
+  interval: 1m
+  url: http://forgejo.forgejo.svc.cluster.local:3000/endgrainlabs/example-stack.git
+  ref:
+    branch: main

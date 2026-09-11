@@ -1,0 +1,30 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - secrets.yaml
+  - postgres.yaml
+  - migrate.yaml
+  - go-api.yaml
+  - go-grpc.yaml
+  - rust-inventory.yaml
+  - landing.yaml
+  - ui.yaml
+  - ingress.yaml
+  - prometheus-rules.yaml
+  - grafana-dashboard-go-api.yaml
+  - grafana-dashboard-go-grpc.yaml
+  - grafana-dashboard-rust-inventory.yaml
+  - grafana-dashboard-consolidated.yaml
+
+configMapGenerator:
+  - name: ui-content
+    namespace: example-stack
+    files:
+      - ui/index.html
+      - ui/app.js
+      - ui/style.css
+  - name: ui-nginx-conf
+    namespace: example-stack
+    files:
+      - nginx.conf.template=ui/nginx.conf.template

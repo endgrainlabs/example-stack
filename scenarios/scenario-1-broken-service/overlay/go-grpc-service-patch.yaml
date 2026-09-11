@@ -1,0 +1,17 @@
+# Scenario 1: Break go-grpc Service networking.
+# Change the gRPC targetPort to 9099 (container listens on 9090).
+# The pod is healthy, but kube Service routing drops all gRPC traffic.
+# go-api sees pricing failures (502) while go-grpc health checks pass.
+apiVersion: v1
+kind: Service
+metadata:
+  name: go-grpc
+  namespace: example-stack
+spec:
+  ports:
+    - name: grpc
+      port: 9090
+      targetPort: 9099
+    - name: metrics
+      port: 9091
+      targetPort: 9091

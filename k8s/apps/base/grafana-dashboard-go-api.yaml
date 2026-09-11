@@ -1,0 +1,146 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-go-api
+  namespace: example-stack
+  labels:
+    grafana_dashboard: "1"
+data:
+  go-api.json: |
+    {
+      "annotations": { "list": [] },
+      "description": "go-api service metrics",
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "links": [],
+      "panels": [
+        {
+          "title": "Request Rate",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "targets": [
+            {
+              "expr": "sum(rate(goapi_http_requests_total[5m])) by (route)",
+              "legendFormat": "{{ route }}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": { "drawStyle": "line", "fillOpacity": 10 }
+            }
+          }
+        },
+        {
+          "title": "Error Rate",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "targets": [
+            {
+              "expr": "goapi:http_error_rate:5m",
+              "legendFormat": "5xx error rate"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "percentunit",
+              "custom": { "drawStyle": "line", "fillOpacity": 10 },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 0.01 },
+                  { "color": "red", "value": 0.05 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "title": "Latency Percentiles",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "targets": [
+            {
+              "expr": "goapi:http_latency_p50:5m",
+              "legendFormat": "p50"
+            },
+            {
+              "expr": "goapi:http_latency_p90:5m",
+              "legendFormat": "p90"
+            },
+            {
+              "expr": "goapi:http_latency_p99:5m",
+              "legendFormat": "p99"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": { "drawStyle": "line", "fillOpacity": 10 }
+            }
+          }
+        },
+        {
+          "title": "Orders",
+          "type": "stat",
+          "gridPos": { "h": 8, "w": 6, "x": 12, "y": 8 },
+          "targets": [
+            {
+              "expr": "goapi_orders_count",
+              "legendFormat": "orders"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "title": "Request Rate by Status",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 6, "x": 18, "y": 8 },
+          "targets": [
+            {
+              "expr": "sum(rate(goapi_http_requests_total[5m])) by (status)",
+              "legendFormat": "{{ status }}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": { "drawStyle": "bars", "fillOpacity": 50, "stacking": { "mode": "normal" } }
+            }
+          }
+        },
+        {
+          "title": "Latency Heatmap",
+          "type": "heatmap",
+          "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+          "targets": [
+            {
+              "expr": "sum(increase(goapi_http_request_duration_seconds_bucket[1m])) by (le)",
+              "format": "heatmap",
+              "legendFormat": "{{ le }}"
+            }
+          ],
+          "options": {
+            "calculate": false,
+            "yAxis": { "unit": "s" }
+          }
+        }
+      ],
+      "schemaVersion": 39,
+      "tags": ["example-stack", "go-api"],
+      "templating": { "list": [] },
+      "time": { "from": "now-30m", "to": "now" },
+      "title": "go-api",
+      "uid": "example-stack-go-api"
+    }

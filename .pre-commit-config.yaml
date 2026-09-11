@@ -1,0 +1,44 @@
+# Hooks for prek. Install once with `prek install`.
+#
+# Formatting and static analysis only. Tests need a cluster or a long compile
+# and belong in a workflow, not in a commit hook.
+repos:
+  - repo: local
+    hooks:
+      - id: gofmt
+        name: gofmt
+        entry: bash -c 'test -z "$(gofmt -l .)"'
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      - id: go-vet
+        name: go vet
+        entry: bash -c 'go vet ./...'
+        language: system
+        types: [go]
+        pass_filenames: false
+
+      - id: cargo-fmt
+        name: cargo fmt
+        entry: bash -c 'cd rust-inventory && cargo fmt --check'
+        language: system
+        files: ^rust-inventory/
+        pass_filenames: false
+
+      - id: cargo-clippy
+        name: cargo clippy
+        entry: bash -c 'cd rust-inventory && cargo clippy -- -D warnings'
+        language: system
+        files: ^rust-inventory/
+        pass_filenames: false
+
+      # shellcheck and actionlint from the pins in the Makefile. semgrep is
+      # not in the hook: it starts a container and fetches its rules, which
+      # is too slow and too network-bound for every commit. `make lint` runs
+      # it by hand, and the workflow runs it on dispatch.
+      - id: lint
+        name: shellcheck and actionlint
+        entry: make shellcheck actionlint
+        language: system
+        pass_filenames: false

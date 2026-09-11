@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: forgejo
+  namespace: forgejo
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: forgejo
+  template:
+    metadata:
+      labels:
+        app: forgejo
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: forgejo
+          image: codeberg.org/forgejo/forgejo:16.0.4-rootless@sha256:a263a1298e89e0bdf019005ce1927e9aadaa8f1bd2a94a3e66ad94e2a89e19ce
+          ports:
+            - name: http
+              containerPort: 3000
+            - name: ssh
+              containerPort: 22
+          env:
+            - name: USER_UID
+              value: "1000"
+            - name: USER_GID
+              value: "1000"
+            - name: FORGEJO__database__DB_TYPE
+              value: "sqlite3"
+            - name: FORGEJO__database__PATH
+              value: "/var/lib/gitea/data/forgejo.db"
+            - name: FORGEJO__server__DOMAIN
+              value: "forgejo.forgejo.svc.cluster.local"
+            - name: FORGEJO__server__ROOT_URL
+              value: "http://forgejo.forgejo.svc.cluster.local:3000/"
+            - name: FORGEJO__server__HTTP_PORT
+              value: "3000"
+            - name: FORGEJO__server__SSH_PORT
+              value: "22"
+            - name: FORGEJO__server__START_SSH_SERVER
+              value: "false"
+            - name: FORGEJO__security__INSTALL_LOCK
+              value: "true"
+            - name: FORGEJO__service__DISABLE_REGISTRATION
+              value: "true"
+            - name: FORGEJO__service__REQUIRE_SIGNIN_VIEW
+              value: "false"
+            - name: FORGEJO__repository__DEFAULT_BRANCH
+              value: "main"
+            - name: FORGEJO__log__LEVEL
+              value: "Info"
+            # Demo-only: the webhook allowlist is open because Forgejo and the
+            # Flux notification controller share this cluster and the Receiver
+            # is reached at its in-cluster service address.
+            - name: FORGEJO__webhook__ALLOWED_HOST_LIST
+              value: "*"
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/gitea
+          livenessProbe:
+            httpGet:
+              path: /api/healthz
+              port: 3000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /api/healthz
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: forgejo-data

@@ -1,0 +1,23 @@
+# Shared secret between the Forgejo webhook and the Flux Receiver. Demo-only
+# value: this stack is a local reference environment, not a deployment target.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: receiver-token
+  namespace: flux-system
+stringData:
+  token: example-stack-webhook-secret
+---
+apiVersion: notification.toolkit.fluxcd.io/v1
+kind: Receiver
+metadata:
+  name: forgejo
+  namespace: flux-system
+spec:
+  type: generic
+  secretRef:
+    name: receiver-token
+  resources:
+    - apiVersion: source.toolkit.fluxcd.io/v1
+      kind: GitRepository
+      name: example-stack

@@ -1,0 +1,123 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: landing-content
+  namespace: example-stack
+data:
+  index.html: |
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <title>example-stack</title>
+      <style>
+        body { font-family: system-ui, -apple-system, sans-serif; max-width: 760px; margin: 3rem auto; padding: 0 1.5rem; color: #1a1a1a; line-height: 1.55; }
+        h1 { border-bottom: 2px solid #333; padding-bottom: 0.3rem; }
+        h2 { margin-top: 2rem; color: #444; }
+        a { color: #0057b8; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        ul { padding-left: 1.2rem; }
+        li { margin: 0.4rem 0; }
+        code { background: #f2f2f2; padding: 0.1rem 0.3rem; border-radius: 3px; font-size: 0.92em; }
+        .note { background: #fff8d6; border-left: 3px solid #c9a500; padding: 0.6rem 0.9rem; margin: 1rem 0; font-size: 0.95em; }
+      </style>
+    </head>
+    <body>
+      <h1>example-stack</h1>
+      <p>A small distributed system on a local k3d cluster: three services over a shared PostgreSQL, deployed by Flux from an in-cluster Forgejo repository, with kube-prometheus-stack collecting the signals. It is a reference environment to point tools at, and it ships failure scenarios that break it in specific ways.</p>
+
+      <div class="note">
+        Hostnames below use <code>*.localhost</code>, which resolves to 127.0.0.1 with no hosts-file editing on macOS, in all major browsers, and on Linux under systemd-resolved or nss-myhostname. On a Linux host with neither, add one <code>/etc/hosts</code> entry per hostname. Everything is served through the k3d Traefik ingress on host port 8090.
+      </div>
+
+      <h2>Services</h2>
+      <ul>
+        <li><a href="http://ui.localhost:8090/">order-management UI</a> - Browser UI over the stack. Place orders, browse inventory, delete orders, and watch API errors surface when a failure scenario is applied.</li>
+        <li><a href="http://goapi.localhost:8090/healthz">go-api</a> - Frontend service. Composes orders by calling rust-inventory (stock) and go-grpc (pricing), stores results in PostgreSQL. Try <code>/healthz</code>, <code>/readyz</code>, <code>/metrics</code>.</li>
+        <li><a href="http://rust.localhost:8090/healthz">rust-inventory</a> - Rust inventory service backed by PostgreSQL. Provides stock data for go-api. Try <code>/healthz</code>, <code>/readyz</code>, <code>/metrics</code>.</li>
+        <li>go-grpc - gRPC pricing and echo service. The ingress is HTTP-only, so reach it with <code>kubectl -n example-stack port-forward svc/go-grpc 19090:9090</code> and <code>grpcurl -plaintext localhost:19090 echo.v1.EchoService/Health</code>.</li>
+      </ul>
+
+      <h2>Infrastructure</h2>
+      <ul>
+        <li><a href="http://grafana.localhost:8090/">Grafana</a> - kube-prometheus-stack dashboards. Per-service and consolidated views with service level objective gauges. Demo-only login: <code>admin</code> / <code>admin</code>.</li>
+        <li><a href="http://prometheus.localhost:8090/">Prometheus</a> - metrics store, service level objective recording rules, alerting rules.</li>
+        <li><a href="http://forgejo.localhost:8090/">Forgejo</a> - in-cluster Git source of truth. Flux reconciles the <code>endgrainlabs/example-stack</code> repository from here. Demo-only login: <code>bootstrap</code> / <code>password</code>.</li>
+      </ul>
+
+      <h2>Authenticated endpoints</h2>
+      <p>The service APIs require a bearer token. The demo-only value is <code>dev-token</code>. Create an order, which exercises the full call graph:</p>
+      <p><code>curl -H "Authorization: Bearer dev-token" -H "Content-Type: application/json" -d '{"item_id":"a0000000-0000-0000-0000-000000000001","quantity":2}' http://goapi.localhost:8090/api/v1/orders</code></p>
+      <p>List orders:</p>
+      <p><code>curl -H "Authorization: Bearer dev-token" http://goapi.localhost:8090/api/v1/orders</code></p>
+      <p>List inventory:</p>
+      <p><code>curl -H "Authorization: Bearer dev-token" http://rust.localhost:8090/api/v1/inventory</code></p>
+
+      <h2 id="scenarios">Failure scenarios</h2>
+      <p>Each scenario pushes a kustomize overlay to Forgejo, Flux reconciles it, and <code>--reset</code> reverts it. Run them from a checkout of the repository.</p>
+      <ul>
+        <li><strong>1: broken service port</strong> - the <code>go-grpc</code> Service targets a port nothing listens on. The pod stays healthy, order creation returns 502.<br><code>bash scenarios/scenario-1-broken-service/demo.sh</code></li>
+        <li><strong>2: bad migration</strong> - a migration renames the inventory <code>quantity</code> column. The Job succeeds, <code>rust-inventory</code> queries return 500.<br><code>bash scenarios/scenario-2-bad-migration/demo.sh</code></li>
+        <li><strong>3: pricing assumption</strong> - <code>go-grpc</code> returns a different currency for one warehouse. Both services are healthy, orders for that warehouse return 422.<br><code>bash scenarios/scenario-3-pricing-assumption/demo.sh</code></li>
+      </ul>
+
+      <h2>Scripts</h2>
+      <ul>
+        <li><code>bash scripts/build.sh</code> - rebuild and push the service images to the local registry.</li>
+        <li><code>bash scripts/smoke-test.sh</code> - exercise the service APIs end to end.</li>
+        <li><code>bash scripts/validate-stack.sh</code> - check pods, ingress, metrics, Prometheus targets, and Flux reconciliation.</li>
+        <li><code>bash scripts/teardown.sh</code> - remove the cluster, registry, and network. Pass <code>--remove-images</code> to also delete built images.</li>
+      </ul>
+    </body>
+    </html>
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: landing
+  namespace: example-stack
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: landing
+  template:
+    metadata:
+      labels:
+        app: landing
+    spec:
+      containers:
+        - name: nginx
+          image: docker.io/library/nginx:1.29-alpine@sha256:5616878291a2eed594aee8db4dade5878cf7edcb475e59193904b198d9b830de
+          ports:
+            - name: http
+              containerPort: 80
+          volumeMounts:
+            - name: content
+              mountPath: /usr/share/nginx/html
+              readOnly: true
+          resources:
+            requests:
+              cpu: 5m
+              memory: 16Mi
+            limits:
+              memory: 64Mi
+      volumes:
+        - name: content
+          configMap:
+            name: landing-content
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: landing
+  namespace: example-stack
+spec:
+  selector:
+    app: landing
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80

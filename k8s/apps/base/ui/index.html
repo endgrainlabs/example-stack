@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>example-stack order management</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <h1>order management</h1>
+    <div class="subtitle">order management over the example stack. <a href="http://example-stack.localhost:8090/">Back to landing</a></div>
+    <div class="status-row">
+      <span class="status" id="status-goapi">go-api&nbsp;<em>&hellip;</em></span>
+      <span class="status" id="status-rust">rust-inventory&nbsp;<em>&hellip;</em></span>
+    </div>
+  </header>
+
+  <div id="error-banner" class="banner hidden"></div>
+
+  <main>
+    <section>
+      <div class="section-head">
+        <h2>inventory</h2>
+        <button class="refresh" data-target="inventory">refresh</button>
+      </div>
+      <table id="inventory-table">
+        <thead>
+          <tr><th>name</th><th>quantity</th><th>warehouse</th><th class="mono">id</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>place order</h2>
+      <form id="order-form">
+        <label>item
+          <select name="item_id" required></select>
+        </label>
+        <label>quantity
+          <input name="quantity" type="number" min="1" value="1" required>
+        </label>
+        <button type="submit">create order</button>
+      </form>
+      <div id="order-result" class="result hidden"></div>
+    </section>
+
+    <section>
+      <div class="section-head">
+        <h2>orders</h2>
+        <button class="refresh" data-target="orders">refresh</button>
+      </div>
+      <table id="orders-table">
+        <thead>
+          <tr><th>created</th><th>item</th><th>quantity</th><th>unit</th><th>total</th><th>currency</th><th></th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+  </main>
+
+  <footer>
+    <p>
+      This page talks to go-api and rust-inventory through an nginx proxy that
+      injects the demo bearer token server-side. API errors surface here in full,
+      so a <a href="http://example-stack.localhost:8090/#scenarios">failure scenario</a> is
+      visible as a user would experience it.
+    </p>
+  </footer>
+
+  <script src="/app.js"></script>
+</body>
+</html>
