@@ -93,9 +93,12 @@ Scripts are run with `bash`, never marked executable. Every script takes
 `--help` and configures itself by flag. `setup.sh` calls `build.sh`, so a bare
 `bash scripts/setup.sh` on a clean machine does everything. Every phase checks
 for the state it would create, so a second run against a live cluster
-reconciles instead of starting over. `teardown.sh` keeps the built images by
-default; pass `--remove-images` to delete them too. `setup.sh` exits non-zero
-if the smoke test at the end of it fails.
+reconciles instead of starting over. Reset any applied scenario before that
+second run: the seed push restores the manifests in Forgejo but not the
+database, so a scenario that changed the schema stays broken until its driver
+is run with `--reset`. `teardown.sh` keeps the built images by default; pass
+`--remove-images` to delete them too. `setup.sh` exits non-zero if the smoke
+test at the end of it fails.
 
 The cluster gets its own kubeconfig at `$HOME/.kube/example-stack.yaml` and
 never rewrites the default one:

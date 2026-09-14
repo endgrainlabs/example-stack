@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -48,6 +49,11 @@ type InventoryItem struct {
 	Warehouse string `json:"warehouse"`
 	CreatedAt string `json:"created_at"`
 }
+
+// backendTimeout bounds every call go-api makes to another service. The
+// HTTP client has always carried it; the gRPC client inherits the request
+// context, which has no deadline, so the pricing call sets one itself.
+const backendTimeout = 5 * time.Second
 
 type app struct {
 	db           *sql.DB
@@ -147,7 +153,7 @@ func main() {
 		db:           db,
 		pricing:      ppb.NewPricingServiceClient(conn),
 		inventoryURL: inventoryURL,
-		httpClient:   &http.Client{Timeout: 5 * time.Second},
+		httpClient:   &http.Client{Timeout: backendTimeout},
 		apiToken:     apiToken,
 	}
 
@@ -278,7 +284,9 @@ func (a *app) handleCreateOrder(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Call go-grpc for pricing
-	ctx := metadata.AppendToOutgoingContext(r.Context(), "authorization", "Bearer "+a.apiToken)
+	ctx, cancel := context.WithTimeout(r.Context(), backendTimeout)
+	defer cancel()
+	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+a.apiToken)
 	priceResp, err := a.pricing.GetPrice(ctx, &ppb.PriceRequest{
 		ItemId:   req.ItemID,
 		Quantity: req.Quantity,
