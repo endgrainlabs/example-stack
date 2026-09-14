@@ -27,10 +27,12 @@ type fakePricing struct {
 	currency  string
 	err       error
 	last      *ppb.PriceRequest
+	lastCtx   context.Context
 }
 
-func (f *fakePricing) GetPrice(_ context.Context, in *ppb.PriceRequest, _ ...grpc.CallOption) (*ppb.PriceResponse, error) {
+func (f *fakePricing) GetPrice(ctx context.Context, in *ppb.PriceRequest, _ ...grpc.CallOption) (*ppb.PriceResponse, error) {
 	f.last = in
+	f.lastCtx = ctx
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -245,6 +247,9 @@ func TestCreateOrderSuccess(t *testing.T) {
 	}
 	if h.pricing.last.GetQuantity() != 2 || h.pricing.last.GetItemId() != o.ItemID {
 		t.Errorf("pricing asked for %+v, want the requested item and quantity", h.pricing.last)
+	}
+	if _, ok := h.pricing.lastCtx.Deadline(); !ok {
+		t.Error("pricing call carried no deadline")
 	}
 	if len(h.db.inserted) != 1 {
 		t.Fatalf("stored %d orders, want 1", len(h.db.inserted))
