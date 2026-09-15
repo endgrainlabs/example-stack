@@ -1,6 +1,6 @@
 # Services
 
-Each service in the stack, its endpoints, what it depends on, and how it is
+This describes each service in the stack, its endpoints, what it depends on, and how it is
 built. The cluster wiring is in [topology.md](topology.md).
 
 Every service authenticates with the bearer token `dev-token`. It is a
@@ -27,8 +27,8 @@ Port 8080.
 Depends on `http://rust-inventory:8081` for stock, `go-grpc:9090` for pricing,
 and the `orders` database.
 
-Status codes worth knowing: 401 without a token, 409 when stock is
-insufficient, 422 when pricing returns a currency other than USD, 502 when a
+Notable status codes: 401 without a token, 409 when stock is
+insufficient, 422 when pricing returns a currency other than USD, and 502 when a
 backend call fails.
 
 What a tool can check here:
@@ -42,9 +42,9 @@ What a tool can check here:
   working.
 - Slow responses from `rust-inventory` raise `go-api` latency.
 
-Known weaknesses, left in deliberately: no pagination on the list endpoint, no
+Deliberate known weaknesses: no pagination on the list endpoint, no
 circuit breaking on backend calls, and orders that reference inventory items
-which were deleted afterwards. Creating an order also never decrements stock:
+which were deleted afterwards. Creating an order also never decrements stock quantity:
 `rust-inventory` is read to check availability and is not written to, so the
 same item can be ordered without limit. The UI reloads the inventory table
 after each order as though the quantity had changed, and it has not.
@@ -80,7 +80,7 @@ What a tool can check here:
 - A call without metadata returns `UNAUTHENTICATED`; an empty item identifier
   or a non-positive quantity returns `INVALID_ARGUMENT`.
 
-Known weaknesses, left in deliberately: no connection draining, so in-flight
+Deliberate known weaknesses: no connection draining, so in-flight
 calls are dropped when the pod restarts, and no request size limits.
 
 ## rust-inventory
@@ -130,7 +130,7 @@ What a tool can check here:
 - The `quantity >= 0` constraint is enforced.
 - Deleting a seeded item makes `go-api` order creation fail for that item.
 
-Known weaknesses, left in deliberately: no connection pooling, so requests
+Deliberate known weaknesses: no connection pooling, so requests
 contend on a single database connection, and no pagination on the list
 endpoint.
 

@@ -46,6 +46,10 @@ spec:
               value: "22"
             - name: FORGEJO__server__START_SSH_SERVER
               value: "false"
+            # Keeps Forgejo from fetching avatars or anything else from the
+            # public internet; the stack makes no outbound requests of its own.
+            - name: FORGEJO__server__OFFLINE_MODE
+              value: "true"
             - name: FORGEJO__security__INSTALL_LOCK
               value: "true"
             - name: FORGEJO__service__DISABLE_REGISTRATION

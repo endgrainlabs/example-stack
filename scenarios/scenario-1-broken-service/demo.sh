@@ -22,35 +22,16 @@ go_grpc_target_port() {
     kubectl -n "${NAMESPACE}" get svc go-grpc -o jsonpath='{.spec.ports[0].targetPort}'
 }
 
-# gRPC keeps a persistent HTTP/2 connection, and conntrack keeps the address
-# translation entry for one that is already established, so changing the
-# Service alone leaves existing traffic flowing. Flushing conntrack and
-# re-dialing from a restarted go-api is what makes the change visible.
-flush_conntrack() {
-    local cluster_ip node
-    cluster_ip=$(kubectl -n "${NAMESPACE}" get svc go-grpc -o jsonpath='{.spec.clusterIP}')
-
-    echo "==> Flushing conntrack entries for the go-grpc ClusterIP"
-    for node in server-0 agent-0; do
-        # conntrack is not in every k3s node image. Say which happened, so a
-        # node without it is visible instead of silently skipped.
-        if podman exec "k3d-${CLUSTER_NAME}-${node}" sh -c 'command -v conntrack' >/dev/null 2>&1; then
-            podman exec "k3d-${CLUSTER_NAME}-${node}" \
-                conntrack -D -p tcp -d "${cluster_ip}" --dport 9090 >/dev/null 2>&1 || true
-            echo "    ${node}: conntrack entries flushed"
-        else
-            echo "    ${node}: conntrack not present, relying on the go-api restart"
-        fi
-    done
-}
-
+# gRPC holds a persistent HTTP/2 connection, so changing the Service alone
+# leaves existing traffic flowing. A restarted go-api dials the ClusterIP
+# afresh and lands on the broken port.
 restart_go_api() {
     echo "==> Restarting go-api so it re-dials through the Service"
     kubectl -n "${NAMESPACE}" rollout restart deployment/go-api
     kubectl -n "${NAMESPACE}" rollout status deployment/go-api --timeout=60s
 }
 
-# The driver restarts go-api, so the counter starts from zero on a new pod and
+# The script restarts go-api, so the counter starts from zero on a new pod and
 # the old pod's series goes stale. The assertion reads the current pod's series
 # only, and keeps creating orders while it polls so the 502s it counts are
 # go-api's own and not a proxy's answer during the rollout.
@@ -85,7 +66,6 @@ if [ "${ACTION}" = "break" ]; then
     scenario_set_flux_path "./scenarios/${SCENARIO_ID}/overlay"
     scenario_wait_for "Service targetPort changed to 9099" "9099" go_grpc_target_port
 
-    flush_conntrack
     restart_go_api
 
     echo ""

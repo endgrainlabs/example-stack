@@ -14,6 +14,21 @@ published. The cluster writes its own kubeconfig
 to `$HOME/.kube/example-stack.yaml` and leaves the default kubeconfig
 untouched, so the context the shell already had is unchanged.
 
+Measured on a podman machine with 4 CPUs and 8 GiB of memory: the stack's
+containers peak just under 3 GiB of memory together during bring-up, the two
+k3s nodes each burst past a full core while the images load, the first run
+takes under ten minutes from nothing and about six with the images already
+built, and a re-run reconciles in under two. The cluster occupies about 5 GiB
+of the machine's disk while it is up and releases it at teardown; what
+teardown keeps, the built images and the k3s image, is under 1 GiB, plus the
+Go and Rust build caches podman holds between builds. `setup.sh` enforces a
+floor of 4 GiB of memory, the smallest machine that leaves that peak headroom.
+
+Besides the three host ports, scripts open short-lived port-forwards on 13000
+(Forgejo bootstrap), 18080, 18081, 18082, 19090, and 19091 (smoke test and
+stack validation), and 19092 (the go-grpc health call in a scenario's
+`--verify`).
+
 Namespaces:
 
 | Namespace | Holds |
