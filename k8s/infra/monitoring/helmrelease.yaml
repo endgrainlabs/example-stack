@@ -57,6 +57,13 @@ spec:
       enabled: true
       adminPassword: admin
       defaultDashboardsEnabled: true
+      # Grafana's defaults report usage to grafana.com and poll it for
+      # updates; the stack makes no outbound requests of its own.
+      grafana.ini:
+        analytics:
+          reporting_enabled: false
+          check_for_updates: false
+          check_for_plugin_updates: false
       service:
         type: ClusterIP
       resources:

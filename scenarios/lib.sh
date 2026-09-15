@@ -1,17 +1,17 @@
 # shellcheck shell=bash
-# Shared machinery for the scenario drivers: flags, Forgejo access, the clone
+# Shared machinery for the scenario scripts: flags, Forgejo access, the clone
 # of the in-cluster repository, the Flux path switch, and the wait helper.
 #
-# Sourced by each demo.sh, never run on its own. A driver sources this file,
-# calls scenario_describe, and then scenario_parse_args "$@". A driver that
+# Sourced by each demo.sh, never run on its own. A demo.sh sources this file,
+# calls scenario_describe, and then scenario_parse_args "$@". A demo.sh that
 # defines scenario_verify_break and scenario_verify_reset calls scenario_verify
 # at the end, which runs the pair the action calls for when --verify was given.
 
-# Most of what this file defines is read by the driver that sources it, which
+# Most of what this file defines is read by the demo.sh that sources it, which
 # is not visible from here.
 # shellcheck disable=SC2034
 
-# Configuration the drivers read after sourcing this file.
+# Configuration the scripts read after sourcing this file.
 CLUSTER_NAME="example-stack"
 # The namespace is fixed: every manifest in k8s/apps/base names it.
 NAMESPACE="example-stack"
@@ -101,7 +101,7 @@ trap scenario_cleanup EXIT
 # Generates a Forgejo access token through the command line inside the pod and
 # opens a port-forward to Forgejo, so the clone below can reach it from the
 # host. The token name carries the scenario and a timestamp: Forgejo rejects a
-# duplicate name, and a driver may be run more than once.
+# duplicate name, and a demo.sh may be run more than once.
 scenario_open_forgejo() {
     local token_output
 
@@ -172,7 +172,7 @@ scenario_set_flux_path() {
 }
 
 # Polls a command until it prints the expected value, for up to two minutes.
-# A timeout is an error: the rest of a driver describes a state the cluster
+# A timeout is an error: the rest of a demo.sh describes a state the cluster
 # would not be in.
 scenario_wait_for() {
     local description="$1"
@@ -195,10 +195,10 @@ scenario_wait_for() {
 
 # --- Verification ----------------------------------------------------------
 #
-# --verify asserts what docs/scenarios.md says the stack does, once the driver
+# --verify asserts what docs/scenarios.md says the stack does, once the script
 # has finished: the symptoms after an apply, the baseline after a reset. Each
 # assertion prints PASS or FAIL the way scripts/smoke-test.sh does, and one
-# failure exits the driver non-zero. Alerts are not asserted: their for clauses
+# failure exits the script non-zero. Alerts are not asserted: their for clauses
 # make them minutes slow, which docs/scenarios.md records.
 
 VERIFY_FAILED=0
@@ -393,7 +393,7 @@ scenario_assert_grpc_serving() {
     fi
 }
 
-# Runs the assertions for the action the driver just took. Each driver defines
+# Runs the assertions for the action the script just took. Each demo.sh defines
 # scenario_verify_break and scenario_verify_reset.
 scenario_verify() {
     if [ "${VERIFY}" -ne 1 ]; then

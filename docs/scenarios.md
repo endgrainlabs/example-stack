@@ -1,82 +1,77 @@
 # Failure scenarios
 
-Three reproducible failures, each a different class of distributed system
-problem, each applied through the GitOps loop and reverted the same way. They
-make this a minimal, current stack for testing and development whose services
-fail in realistic ways on demand, with each failure known in advance.
+There are three reproducible failures, each a different class of distributed system
+problem, each applied through the GitOps loop and reverted the same way, with
+each failure known in advance.
 
-The stack must be running first: `bash scripts/setup.sh`. Every driver is
-idempotent and can be re-run.
+The stack must be running first by executing `bash scripts/setup.sh`. Running `demo.sh`
+for each scenario is idempotent.
 
 ## How a scenario is applied
 
 Each scenario directory holds an `overlay/` (a kustomize overlay over
-`k8s/apps/base`) and a `demo.sh` driver. The driver clones the in-cluster
+`k8s/apps/base`) and a `demo.sh` script to drive it. `demo.sh` clones the in-cluster
 Forgejo repository, commits the overlay, pushes it, and patches the Flux `apps`
-Kustomization to reconcile from the overlay path. The webhook makes Flux act on
-the push immediately.
+Kustomization to reconcile from the overlay path. The webhook triggers a Flux
+reconciliation immediately.
 
-`scenarios/lib.sh` holds what the three drivers share: the flags, the Forgejo
-token and port-forward, the clone, the overlay push, the Flux path switch, and
-the wait helper. Each `demo.sh` keeps only what is specific to its own failure.
-A driver replaces its overlay directory in the clone, so a file dropped from a
+`scenarios/lib.sh` has shared code between the scenarios' `demo.sh` scripts: flags,
+the Forgejo token and port-forward, the clone, the overlay push, the Flux path switch, and
+a wait helper. Each `demo.sh` contains only what is specific to its own failure.
+`demo.sh` replaces its overlay directory in the clone, so a file dropped from a
 scenario does not survive in Forgejo and a re-run with nothing to change pushes
-nothing. A wait that times out fails the driver.
+nothing. A wait that times out fails.
 
-`--reset` points the Kustomization path back at `./k8s/apps/base` and undoes
+Running `demo.sh` with `--reset` points the Kustomization path back at `./k8s/apps/base` and undoes
 whatever else the scenario changed outside Git.
 
 ## Verifying a scenario
 
-`--verify` asserts the outcome once the driver has finished. With an apply it
+Running `demo.sh` with `--verify` asserts the outcome once the script has finished. With an apply it
 asserts the symptoms listed under the scenario below; with `--reset` it asserts
 the baseline. Each assertion prints PASS or FAIL the way `scripts/smoke-test.sh`
-does, and a failed assertion exits the driver non-zero.
+does, and a failed assertion exits `demo.sh` non-zero.
 
 ```sh
 bash scenarios/scenario-1-broken-service/demo.sh --verify
 bash scenarios/scenario-1-broken-service/demo.sh --reset --verify
 ```
 
-The assertions reach the services through the ingress and Prometheus through
-its own, and poll with a deadline: a reconcile, a rollout, and a scrape land
-seconds apart. The `go-grpc` health call needs a port-forward and `grpcurl`,
-and says so instead of failing when `grpcurl` is not installed.
+The assertions reach the services and Prometheus through their respective
+ingress and poll with a deadline, since a reconcile, a rollout, and a scrape
+land seconds apart. The `go-grpc` health check needs a port-forward and
+`grpcurl`, and logs a SKIP instead of failing when `grpcurl` is not installed.
 
 Alerts are not asserted. Their `for` clauses put them minutes behind the
-symptom, as the section on alerts below describes.
+symptom, as described in the alerts section below.
 
-Every driver takes `--help`, and accepts `--cluster-name`, `--ingress-port`,
-and `--kubeconfig-path` when the stack was brought up on values other than the
-defaults. `--kubeconfig-path` defaults to `$HOME/.kube/<cluster-name>.yaml`,
-the file `setup.sh` writes. The namespace is not a flag: every manifest in
-`k8s/apps/base` names `example-stack`.
+Every scenario's `demo.sh` supports `--help`, and accepts `--cluster-name`, `--ingress-port`,
+and `--kubeconfig-path` if the stack was brought up on values other than the
+defaults. `--kubeconfig-path` defaults to `$HOME/.kube/<cluster-name>.yaml` like `setup.sh`.
+The namespace is not a flag: every manifest in `k8s/apps/base` names `example-stack`.
 
 ## Scenario 1: broken service port
 
-Class: Kubernetes networking misconfiguration.
+This is a Kubernetes networking misconfiguration.
 
 The `go-grpc` Service `targetPort` is changed to 9099 while the container still
 listens on 9090. Service routing drops every gRPC connection. The pod is
 completely healthy: liveness and readiness pass, the process is fine, and its
 own metrics show nothing wrong.
 
-gRPC keeps a persistent HTTP/2 connection, and conntrack preserves the network
-address translation entry for an established connection, so changing the
-Service alone would not break traffic that is already flowing. The driver
-flushes the conntrack entries on each node that has the `conntrack` binary, and
-prints which nodes it flushed. It then restarts `go-api` so it re-dials through
-the broken Service, which breaks the traffic on any node where the flush was
-skipped.
+gRPC holds a persistent HTTP/2 connection, so changing the Service alone leaves
+traffic that is already flowing untouched. The script restarts `go-api` so it
+dials the Service afresh and lands on the broken port, the way a deploy or a
+pod eviction would surface the fault in practice.
 
-What a good observer sees:
+What a careful observer sees:
 
 - `go-grpc` pod healthy, readiness passing.
 - `go-api` order creation returning 502, because the pricing call fails.
 - `go-api` order reads and health checks unaffected: they do not touch gRPC.
 - `goapi_http_requests_total{status="502"}` rising in Prometheus.
 - `GoApiHighErrorRate` firing after about two minutes of sustained errors,
-  which takes a request loop like the one the driver prints; one request does
+  which takes a request loop like the one `demo.sh` prints; one request does
   not trip it.
 
 Every health check in the cluster passes while the service is unreachable. Only
@@ -93,7 +88,7 @@ order creation returns 201.
 
 ## Scenario 2: bad migration
 
-Class: a schema migration that breaks application queries.
+This is a schema migration that breaks application queries.
 
 A goose migration renames the inventory table's `quantity` column to `qty`. The
 overlay ships that migration in a ConfigMap and adds a second migration Job
@@ -102,7 +97,7 @@ ConfigMap, so the migration runs from the same binary the baseline Jobs use.
 The migration is valid and the Job succeeds. `rust-inventory` queries still
 name `quantity` and start failing.
 
-What a good observer sees:
+What a careful observer sees:
 
 - The `migrate-inventory-v2` Job succeeding. The deploy looks clean.
 - `rust-inventory` returning 500 on inventory queries.
@@ -136,19 +131,19 @@ that fails fails the reset.
 
 ## Scenario 3: pricing assumption
 
-Class: a cross-service assumption the protocol does not capture.
+This is a cross-service assumption the protocol does not capture.
 
 `go-api` assumes every price is in USD and rejects anything else with 422. The
 overlay sets `REGIONAL_PRICING=002=EUR` on `go-grpc`, which prices every item
-whose identifier ends in `002` in EUR. That is Gadget, item `...0002`, the
-`west` warehouse item. `go-grpc` holds no inventory and keys the rule on the
+whose identifier ends in `002` in EUR (Gadget, item `...0002`, the
+`west` warehouse item). `go-grpc` holds no inventory and keys the rule on the
 identifier alone. The proto allows any currency string, so `go-grpc` is correct
 by its own contract and completely healthy.
 
 This is a partial failure. Orders for Widget and Sprocket, both `east` and both
 USD, still succeed. Only Gadget fails.
 
-What a good observer sees:
+What a careful observer sees:
 
 - `go-grpc` healthy, every call succeeding, every response valid against the
   proto.
