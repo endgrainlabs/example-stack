@@ -271,3 +271,8 @@ gh workflow run rust.yml --ref <branch>     # cargo fmt, clippy, and cargo test
 
 As a result they don't appear as pull request checks. You can list results with
 `gh run list --workflow=checks.yml` and `gh run list --workflow=rust.yml`.
+
+Dependabot opens monthly pull requests for Go modules, Rust crates, the
+Dockerfile base images, and the GitHub Actions, with minor and patch updates
+grouped. The images and chart versions pinned in the manifests and scripts are
+updated by hand.
