@@ -52,7 +52,7 @@ updates:
     # without the other makes rustup download a second toolchain on every
     # build. The two move together by hand.
     ignore:
-      - dependency-name: rust
+      - dependency-name: "*rust"
 
   - package-ecosystem: github-actions
     directory: /
