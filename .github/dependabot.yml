@@ -1,0 +1,45 @@
+# Routine version updates. Security updates are on by default and need no
+# config; this adds the weekly bumps that catch a stale line before there is
+# an advisory. Nothing here creates a workflow run: every workflow is
+# dispatch-only, so a Dependabot pull request costs nothing until it is merged.
+#
+# Not covered, because Dependabot has no ecosystem for them: the k3s,
+# PostgreSQL, Forgejo, and registry images pinned in the manifests and
+# scripts, and the chart versions in the HelmReleases.
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      go-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: cargo
+    directory: /rust-inventory
+    schedule:
+      interval: weekly
+    groups:
+      rust-minor-and-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: docker
+    directories:
+      - /go-api
+      - /go-grpc
+      - /migrate
+      - /rust-inventory
+    schedule:
+      interval: weekly
+    groups:
+      base-images:
+        patterns: ["*"]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
