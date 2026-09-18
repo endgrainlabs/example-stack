@@ -1,7 +1,11 @@
 name: rust
 
-# Runs on demand from a branch before merge, not on every push.
+# Runs on pull requests and on pushes to main. workflow_dispatch stays
+# for running it against a branch by hand.
 on:
+  pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -17,6 +21,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The crate registry and the build directory, keyed on the lockfile and
+      # the toolchain pin, so a dependency or toolchain change misses.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust-inventory/target
+          key: cargo-${{ runner.os }}-${{ hashFiles('rust-inventory/Cargo.lock', 'rust-inventory/rust-toolchain.toml') }}
+          # A lockfile or toolchain change starts from the newest cache that
+          # still applies; cargo rebuilds what its fingerprints say changed.
+          restore-keys: cargo-${{ runner.os }}-
       # rustup reads rust-inventory/rust-toolchain.toml, so the channel and its
       # components come from the repository, not from the runner image.
       - run: rustup show

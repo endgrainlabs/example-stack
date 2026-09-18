@@ -82,7 +82,7 @@ def main(argv):
         return 1
     try:
         print(QUESTIONS[argv[1]](data, argument))
-    except (KeyError, IndexError, TypeError) as err:
+    except (KeyError, IndexError, TypeError, AttributeError) as err:
         sys.stderr.write("promjson.py: unexpected response shape: %s\n" % err)
         return 1
     return 0
