@@ -62,10 +62,14 @@ impl AppState {
 
 /// Borrows the client out of a held lock, or answers for a process that has
 /// none. The caller keeps the guard: the borrow lives as long as it does.
-fn client<'a>(guard: &'a MutexGuard<'_, Option<Client>>) -> Result<&'a Client, HttpResponse> {
+/// The error is boxed because an HttpResponse is 128 bytes as of actix-web
+/// 4.15, and clippy's result_large_err rejects an Err that size.
+fn client<'a>(guard: &'a MutexGuard<'_, Option<Client>>) -> Result<&'a Client, Box<HttpResponse>> {
     guard.as_ref().ok_or_else(|| {
-        HttpResponse::ServiceUnavailable()
-            .json(serde_json::json!({"error": "database not connected"}))
+        Box::new(
+            HttpResponse::ServiceUnavailable()
+                .json(serde_json::json!({"error": "database not connected"})),
+        )
     })
 }
 
@@ -161,7 +165,7 @@ async fn ready(state: web::Data<Arc<AppState>>) -> HttpResponse {
     }
 }
 
-fn check_auth(req: &HttpRequest, state: &AppState) -> Result<(), HttpResponse> {
+fn check_auth(req: &HttpRequest, state: &AppState) -> Result<(), Box<HttpResponse>> {
     let token = req
         .headers()
         .get("Authorization")
@@ -169,20 +173,22 @@ fn check_auth(req: &HttpRequest, state: &AppState) -> Result<(), HttpResponse> {
         .unwrap_or("");
 
     if token != format!("Bearer {}", state.api_token) {
-        return Err(HttpResponse::Unauthorized().json(serde_json::json!({"error": "unauthorized"})));
+        return Err(Box::new(
+            HttpResponse::Unauthorized().json(serde_json::json!({"error": "unauthorized"})),
+        ));
     }
     Ok(())
 }
 
 async fn list_items(req: HttpRequest, state: web::Data<Arc<AppState>>) -> HttpResponse {
     if let Err(resp) = check_auth(&req, &state) {
-        return resp;
+        return *resp;
     }
 
     let guard = state.db.lock().await;
     let db = match client(&guard) {
         Ok(db) => db,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     match db.query("SELECT id, name, quantity, warehouse, created_at FROM inventory ORDER BY created_at DESC", &[]).await {
         Ok(rows) => {
@@ -209,7 +215,7 @@ async fn create_item(
     body: web::Json<CreateItemRequest>,
 ) -> HttpResponse {
     if let Err(resp) = check_auth(&req, &state) {
-        return resp;
+        return *resp;
     }
 
     if body.name.is_empty() {
@@ -224,7 +230,7 @@ async fn create_item(
     let guard = state.db.lock().await;
     let db = match client(&guard) {
         Ok(db) => db,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     match db
         .execute(
@@ -265,7 +271,7 @@ async fn get_item(
     path: web::Path<String>,
 ) -> HttpResponse {
     if let Err(resp) = check_auth(&req, &state) {
-        return resp;
+        return *resp;
     }
 
     let id = match uuid::Uuid::parse_str(&path.into_inner()) {
@@ -278,7 +284,7 @@ async fn get_item(
     let guard = state.db.lock().await;
     let db = match client(&guard) {
         Ok(db) => db,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     match db
         .query_opt(
@@ -310,7 +316,7 @@ async fn delete_item(
     path: web::Path<String>,
 ) -> HttpResponse {
     if let Err(resp) = check_auth(&req, &state) {
-        return resp;
+        return *resp;
     }
 
     let id = match uuid::Uuid::parse_str(&path.into_inner()) {
@@ -323,7 +329,7 @@ async fn delete_item(
     let guard = state.db.lock().await;
     let db = match client(&guard) {
         Ok(db) => db,
-        Err(resp) => return resp,
+        Err(resp) => return *resp,
     };
     match db
         .execute("DELETE FROM inventory WHERE id = $1", &[&id])
