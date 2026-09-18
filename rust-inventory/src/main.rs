@@ -62,6 +62,8 @@ impl AppState {
 
 /// Borrows the client out of a held lock, or answers for a process that has
 /// none. The caller keeps the guard: the borrow lives as long as it does.
+/// The error is boxed because an HttpResponse is 128 bytes as of actix-web
+/// 4.15, and clippy's result_large_err rejects an Err that size.
 fn client<'a>(guard: &'a MutexGuard<'_, Option<Client>>) -> Result<&'a Client, Box<HttpResponse>> {
     guard.as_ref().ok_or_else(|| {
         Box::new(
