@@ -84,6 +84,8 @@ async fn the_api_rejects_a_missing_or_wrong_token() {
                 uri,
                 header
             );
+            let body: serde_json::Value = test::read_body_json(resp).await;
+            assert_eq!(body, serde_json::json!({"error": "unauthorized"}));
         }
     }
 }
@@ -154,4 +156,6 @@ async fn a_valid_request_without_a_client_is_unavailable() {
     let resp = test::call_service(&app, req).await;
 
     assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    let body: serde_json::Value = test::read_body_json(resp).await;
+    assert_eq!(body, serde_json::json!({"error": "database not connected"}));
 }
