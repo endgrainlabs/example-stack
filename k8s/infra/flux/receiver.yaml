@@ -1,5 +1,5 @@
 # Shared secret between the Forgejo webhook and the Flux Receiver. Demo-only
-# value: this stack is a local reference environment, not a deployment target.
+# value: this stack runs locally and is not a deployment target.
 apiVersion: v1
 kind: Secret
 metadata:

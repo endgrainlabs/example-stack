@@ -25,10 +25,10 @@ data:
     </head>
     <body>
       <h1>example-stack</h1>
-      <p>A small distributed system on a local k3d cluster: three services over a shared PostgreSQL, deployed by Flux from an in-cluster Forgejo repository, with kube-prometheus-stack collecting the signals. It is a reference environment to point tools at, and it ships failure scenarios that break it in specific ways.</p>
+      <p>A small distributed system on a local k3d cluster: three services over a shared PostgreSQL, deployed by Flux from an in-cluster Forgejo repository, with kube-prometheus-stack collecting the signals. It ships failure scenarios that break it in specific ways and revert.</p>
 
       <div class="note">
-        Hostnames below use <code>*.localhost</code>, which resolves to 127.0.0.1 with no hosts-file editing on macOS, in all major browsers, and on Linux under systemd-resolved or nss-myhostname. On a Linux host with neither, add one <code>/etc/hosts</code> entry per hostname. Everything is served through the k3d Traefik ingress on host port 8090.
+        Hostnames below use <code>*.localhost</code>, which Chrome, Firefox, and <code>curl</code> resolve to 127.0.0.1 themselves. Safari and other tools use the system resolver, which does so on Linux under systemd-resolved or nss-myhostname and not on macOS; for those, add one <code>/etc/hosts</code> entry per hostname. Everything is served through the k3d Traefik ingress on host port 8090.
       </div>
 
       <h2>Services</h2>

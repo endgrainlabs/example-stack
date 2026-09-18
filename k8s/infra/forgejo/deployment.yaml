@@ -36,10 +36,15 @@ spec:
               value: "sqlite3"
             - name: FORGEJO__database__PATH
               value: "/var/lib/gitea/data/forgejo.db"
+            # Forgejo builds its redirects and clone URLs from ROOT_URL, so it
+            # names the host ingress, not the in-cluster service. Git and API
+            # calls from the scripts and from Flux go to the service address
+            # and do not depend on it. setup.sh sets the port for
+            # --ingress-port.
             - name: FORGEJO__server__DOMAIN
-              value: "forgejo.forgejo.svc.cluster.local"
+              value: "forgejo.localhost"
             - name: FORGEJO__server__ROOT_URL
-              value: "http://forgejo.forgejo.svc.cluster.local:3000/"
+              value: "http://forgejo.localhost:8090/"
             - name: FORGEJO__server__HTTP_PORT
               value: "3000"
             - name: FORGEJO__server__SSH_PORT

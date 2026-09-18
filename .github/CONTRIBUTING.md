@@ -7,7 +7,13 @@ This document is how work lands in the repositories of Endgrain Labs LLC.
 - Branch, then open a pull request; never commit to the default branch.
 - Pull requests are squash-merged. Add commits on top; never amend or force-push a branch under review.
 - Commit subjects follow the conventional form: `type(scope): subject`.
-- A pull request states what it changes, how it was tested (unit tests, scripts, a run against a cluster), and whether a security review was run or skipped, with the reason.
+- A pull request states what it changes, how it was tested (unit tests, scripts, a run against a cluster), and whether a security review was run or skipped, with the reason. A security review is the author's own assessment, recorded in the pull request; the template lists what calls for one.
+
+## Developer Certificate of Origin
+
+Every commit must carry a `Signed-off-by:` trailer with the author's name and email, which certifies the [Developer Certificate of Origin](https://developercertificate.org/) for the contribution. `git commit -s` adds it. There is no contributor license agreement; the sign-off is the whole of it.
+
+The DCO GitHub App checks every pull request and blocks merge until each commit is signed off. Pull requests from Dependabot are exempt from the check and are merged on the maintainer's review.
 
 ## AI coding assistants
 
@@ -35,4 +41,4 @@ Never include links to AI sessions or conversation transcripts in commits or pul
 
 ## License
 
-See the LICENSE file in each repository. Nothing here is open source unless a repository's LICENSE says so.
+This repository is licensed under the Apache License, Version 2.0; see the LICENSE file. A contribution is licensed under the same terms, which is what the sign-off certifies.

@@ -34,11 +34,15 @@ restart_go_api() {
 # The script restarts go-api, so the counter starts from zero on a new pod and
 # the old pod's series goes stale. The assertion reads the current pod's series
 # only, and keeps creating orders while it polls so the 502s it counts are
-# go-api's own and not a proxy's answer during the rollout.
+# go-api's own and not a proxy's answer during the rollout. The old pod can
+# still be Terminating when the rollout reports done and sorts first about
+# half the time, so the newest Running pod is the one to read.
 errors_502_query() {
     local pod
     pod=$(kubectl -n "${NAMESPACE}" get pods -l app=go-api \
-        -o jsonpath='{.items[0].metadata.name}')
+        --field-selector=status.phase=Running \
+        --sort-by=.metadata.creationTimestamp \
+        -o jsonpath='{.items[*].metadata.name}' | awk '{print $NF}')
     printf 'sum(goapi_http_requests_total{status="502",pod="%s"}) or vector(0)' "${pod}"
 }
 

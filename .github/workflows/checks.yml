@@ -16,8 +16,9 @@ jobs:
         with:
           persist-credentials: false
       # hashFiles is available on steps, not on jobs, so each language gates
-      # its own steps after checkout. A repository without that language
-      # skips them.
+      # its own steps after checkout. There is no Node code today; the node
+      # job below stays so a UI rewrite gets its checks without a workflow
+      # change, and it skips every step until a package-lock.json exists.
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         if: hashFiles('**/go.mod') != ''
         with:

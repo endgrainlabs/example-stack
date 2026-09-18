@@ -82,6 +82,43 @@ check_url() {
     fi
 }
 
+# Passes when the page at a URL contains a string, polling for up to a
+# deadline. A page can be rendered from state that is still settling: on a
+# fresh cluster Forgejo has answered the repository page with a 200 that
+# lacked the clone URL minutes after the seed push, and served the right
+# page shortly after with nothing in between having changed it. One read
+# is a coin toss against that window; a poll is not.
+#
+# The body is captured before the search: under pipefail, grep -q closing
+# the pipe on the first match makes curl's write fail and the pipeline
+# report failure.
+check_body() {
+    local description="$1"
+    local url="$2"
+    local needle="$3"
+    local timeout="${4:-30}"
+    local body status saved deadline
+    deadline=$(( $(date +%s) + timeout ))
+    while :; do
+        body=$(curl -s --max-time 5 -w '\n%{http_code}' "${url}" 2>/dev/null || echo "")
+        status=${body##*$'\n'}
+        body=${body%$'\n'*}
+        if printf '%s' "${body}" | grep -q -- "${needle}"; then
+            pass "${description}"
+            return 0
+        fi
+        if [ "$(date +%s)" -ge "${deadline}" ]; then
+            break
+        fi
+        sleep 2
+    done
+    # Keep what was served last, so a page that stayed wrong can be read
+    # afterwards instead of guessed at.
+    saved=$(mktemp "${TMPDIR:-/tmp}/validate-body.XXXXXX")
+    printf '%s' "${body}" > "${saved}"
+    fail "${description} (no '${needle}' in ${url} within ${timeout}s: status ${status:-none}, ${#body} bytes, body kept at ${saved})"
+}
+
 # --- Pods ---
 
 echo "==> Pod health"
@@ -137,6 +174,12 @@ check_url "ui /" "http://ui.localhost:${INGRESS_PORT}/"
 check_url "go-api /healthz" "http://goapi.localhost:${INGRESS_PORT}/healthz"
 check_url "rust-inventory /healthz" "http://rust.localhost:${INGRESS_PORT}/healthz"
 check_url "forgejo" "http://forgejo.localhost:${INGRESS_PORT}/"
+# The repository page is public and prints the HTTP clone URL, which Forgejo
+# builds from ROOT_URL. A page that names the in-cluster service address
+# means a browser login would redirect somewhere the host cannot resolve.
+check_body "forgejo clone URL names the ingress host" \
+    "http://forgejo.localhost:${INGRESS_PORT}/endgrainlabs/example-stack" \
+    "forgejo.localhost:${INGRESS_PORT}/endgrainlabs/example-stack.git"
 check_url "grafana" "http://grafana.localhost:${INGRESS_PORT}/" "302"
 check_url "prometheus" "http://prometheus.localhost:${INGRESS_PORT}/" "302"
 

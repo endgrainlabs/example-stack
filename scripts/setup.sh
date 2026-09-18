@@ -345,6 +345,13 @@ mark "Phase C begin"
 
 echo "==> Deploying Forgejo"
 kubectl apply -k "${REPO_ROOT}/k8s/infra/forgejo"
+# The manifest's ROOT_URL carries the default ingress port so that Forgejo's
+# redirects and clone URLs point at the host. Like the landing page and UI
+# links, it follows --ingress-port.
+if [ "${INGRESS_PORT}" != "8090" ]; then
+    kubectl -n "${FORGEJO_NS}" set env deployment/forgejo \
+        "FORGEJO__server__ROOT_URL=http://forgejo.localhost:${INGRESS_PORT}/"
+fi
 
 echo "==> Waiting for Forgejo rollout"
 kubectl -n "${FORGEJO_NS}" rollout status deployment/forgejo --timeout=180s
@@ -399,7 +406,20 @@ fi
 echo "==> Port-forwarding Forgejo for bootstrap"
 kubectl -n "${FORGEJO_NS}" port-forward "svc/forgejo" "${FORGEJO_PF_PORT}:3000" &>/dev/null &
 FORGEJO_PF_PID=$!
-sleep 2
+# The forward answers within a second on an idle machine and several on a
+# busy one, so it is polled rather than waited for by a fixed sleep. A forward
+# that never answers fails here, with the cause named, rather than at the
+# first API call under set -e.
+for _ in $(seq 1 40); do
+    if curl -s -o /dev/null --max-time 1 "http://localhost:${FORGEJO_PF_PORT}/" 2>/dev/null; then
+        break
+    fi
+    sleep 0.5
+done
+if ! curl -s -o /dev/null --max-time 1 "http://localhost:${FORGEJO_PF_PORT}/" 2>/dev/null; then
+    echo "ERROR: the Forgejo port-forward on localhost:${FORGEJO_PF_PORT} did not answer within 20s" >&2
+    exit 1
+fi
 
 FORGEJO_API="http://localhost:${FORGEJO_PF_PORT}/api/v1"
 
