@@ -292,8 +292,8 @@ As a result they don't appear as pull request checks. You can list results with
 Dependabot opens monthly pull requests for Go modules, Rust crates, the
 Dockerfile base images, and the GitHub Actions. Go and Rust minor and patch
 updates are grouped and majors come alone; image and action updates are
-grouped whatever their size. The Rust build image is left to Dependabot's
-ignore list and moves by hand together with `rust-toolchain.toml`, and so do
+grouped whatever their size. The Rust build image is on Dependabot's ignore
+list and moves by hand together with `rust-toolchain.toml`, and so do
 the images and chart versions pinned in the manifests and scripts.
 
 ## License

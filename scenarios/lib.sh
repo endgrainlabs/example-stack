@@ -280,7 +280,7 @@ scenario_assert_increased() {
         # value: awk compares "error" with 0 as strings and calls it a rise.
         case "${actual}" in
             ''|*[!0-9.eE+-]*) ;;
-            *)
+            *[0-9]*)
                 if awk -v a="${actual}" -v b="${before}" 'BEGIN { exit !(a > b) }' 2>/dev/null; then
                     echo "  PASS  ${description} (${before} to ${actual})"
                     return 0
