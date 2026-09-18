@@ -4,11 +4,11 @@ This repository is a small distributed system on a local k3d cluster that breaks
 
 ## Build and test
 
-- `go build ./...`, `go vet ./...`, `go test ./...` at the repository root, `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test` in `rust-inventory/`, and `make lint` for shellcheck, actionlint, and semgrep at the versions pinned in the Makefile (`make test` runs the Go and Rust tests). These need no permission and no cluster.
+- `go build ./...`, `go vet ./...`, `go test -race ./...` at the repository root, `cargo fmt --check`, `cargo clippy -- -D warnings`, `cargo test` in `rust-inventory/`, and `make lint` for shellcheck, actionlint, a kustomize build of every manifest directory and overlay, and semgrep at the versions pinned in the Makefile (`make test` runs the Go, Rust, and Python tests). These need no permission and no cluster.
 - The tests need no database and no cluster: the Go tests fake `go-api`'s backends and its database, and `cargo test` runs the `rust-inventory` handlers that answer before a query. Behavior that needs a live stack belongs in `scripts/smoke-test.sh` or in a scenario's `demo.sh --verify`.
 - `bash scripts/setup.sh` brings the cluster up and `bash scripts/teardown.sh` destroys it. These, `scripts/build.sh`, and the scenario scripts need podman, k3d, and a cluster, so ask first.
 - `scripts/build.sh` regenerates the proto code before building images. It needs no preinstalled protoc: it downloads a pinned one into `./bin/tools` against a checksum and builds the plugins from the `tool` directives in `go.mod`.
-- Every workflow is `workflow_dispatch` only; nothing runs on push. Before merge, run `gh workflow run checks.yml --ref <branch>` and `gh workflow run rust.yml --ref <branch>`.
+- Both workflows run on pull requests and on pushes to `main`, and their jobs are required checks on `main`. `gh workflow run <workflow> --ref <branch>` runs one against a branch by hand.
 
 ## Conventions
 

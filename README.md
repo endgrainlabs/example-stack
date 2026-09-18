@@ -1,24 +1,37 @@
 # example-stack
 
-This is a minimal, realistic stack for testing and development. It is a simplified
-inventory and order system and supporting services that can fail in realistic ways on demand.
-It runs on k3d and podman, and once it is up, nothing in this repository makes
-a request outside the cluster; see Prerequisites for what that does and does
-not cover.
+`example-stack` is a minimal, realistic stack for testing and development that
+runs on k3d and podman. It contains a simplified inventory and order system
+and supporting platform services that can fail in realistic ways on demand. It
+is self-contained after startup (see [Prerequisites](#prerequisites) and
+[docs/topology.md](./docs/topology.md) for details).
 
 ## Contents
 
-- Three services with a shared PostgreSQL database, `go-api` (HTTP frontend),
-  `go-grpc` (gRPC pricing), and `rust-inventory` (HTTP stock), plus a basic web
-  UI and a landing page with links to all the services.
-- Schema and seed data are applied by Kubernetes jobs running goose migrations.
-- GitOps - a Forgejo deployment holds the manifests, Flux deploys. Flux is configured
-  to accept webhooks from Forgejo for immediate reconciliation.
-- Monitoring: kube-prometheus-stack (Prometheus, Alertmanager, Grafana,
-  kube-state-metrics, node-exporter), with per-service dashboards, recording
-  rules for error rate and latency, and alerting rules.
+`example-stack` consists of
+
+- Three services and a shared PostgreSQL database
+  - `go-api` (HTTP frontend)
+  - `go-grpc` (gRPC pricing)
+  - `rust-inventory` (HTTP stock)
+- A basic web UI and a landing page with links to all the services
+- Kubernetes Jobs that run goose migrations for the schema and seed data
+- GitOps stack
+  - Forgejo for local source control; it holds the service manifests
+  - Flux for deployment, configured to use Forgejo as a Git source
+  - Flux is pre-configured to accept webhooks from Forgejo
+- Monitoring is the kube-prometheus-stack
+  - Prometheus
+  - Alertmanager
+  - Grafana
+  - kube-state-metrics
+  - node-exporter
+  - Pre-configured with per-service dashboards, recording rules for error rate
+    and latency, and alerting rules.
 - A local image registry that the cluster pulls from.
 - Three failure scenarios that break the stack in a specific way and revert.
+
+This is how they are organized in the repository
 
 ```
 go-api/          Go HTTP frontend service
@@ -32,61 +45,83 @@ scripts/         bring-up, teardown, build, smoke, validation
 docs/            topology, services, scenarios
 ```
 
-More details are available in: [docs/topology.md](docs/topology.md) for the cluster and
-its setup, [docs/services.md](docs/services.md) for each service and its
-endpoints, [docs/scenarios.md](docs/scenarios.md) for the failure scenarios.
+More details are available in: [docs/topology.md](docs/topology.md) for
+the cluster and its setup, [docs/services.md](docs/services.md) for
+each service and its endpoints, [docs/scenarios.md](docs/scenarios.md)
+for the failure scenarios.
 
 ## Prerequisites
 
-Install [podman](https://podman.io/docs/installation),
-[k3d](https://k3d.io/stable/#installation),
-[kubectl](https://kubernetes.io/docs/tasks/tools/), and
-[Go](https://go.dev/doc/install). The scripts also use `curl`, `git`, `python3`,
-and `unzip`. macOS and Linux are the supported platforms; a minimal Linux
-install may need one or more of those four added. `grpcurl` is optional; the
-smoke test skips its gRPC checks if it is not present.
+Running `example-stack` requires
+- [podman](https://podman.io/docs/installation)
+- [k3d](https://k3d.io/stable/#installation)
+- [kubectl](https://kubernetes.io/docs/tasks/tools/)
+- [Go](https://go.dev/doc/install)
 
-podman is the only engine currently supported. It needs no license on a
-company laptop, where Docker Desktop may, and the scripts call it directly for
-builds, the registry, and the network. k3d itself works over the docker
-socket, so docker support is an engine variable through four scripts plus a
-machine to test it on.
+Running the make targets and scripts requires
+- `curl`
+- `git`
+- `python3`,
+- `unzip`
 
-`helm`, `flux`, and `protoc` are not necessary: Flux is installed from a pinned
-upstream manifest, the monitoring stack is a `HelmRelease` that Flux reconciles
-inside the cluster, and `scripts/build.sh` downloads a pinned protoc into
-`./bin/tools`, verifies its checksum, and builds the code generator plugins from
-the versions pinned in `go.mod`.
+`example-stack` currently supports macOS and Linux. A minimal Linux
+install may need one or more script requirements to be installed.
+The scripts also may run `grpcurl`, but the smoke test skips the gRPC checks
+if it is not present.
+
+The only container engine currently supported is podman. Podman
+doesn't require a licence for commercial use, and the scripts call
+it directly for builds, the registry, and the network. k3d itself uses
+the docker socket, so docker support is an engine variable in
+four scripts.
+
+`helm`, `flux`, and `protoc` are **not** required: Flux is installed from a
+pinned upstream manifest, the monitoring stack is a `HelmRelease` that Flux
+reconciles within the cluster, and `scripts/build.sh` downloads a pinned
+protoc binary from the project's release into `./bin/tools` relative to the
+repository root, verifies its checksum, and builds the code generator plugins
+from the versions pinned in `go.mod`.
 
 k3d drives podman through the Docker API socket, and a fresh podman install
-does not point k3d at it. On macOS, either run `sudo podman-mac-helper install`
+won't point k3d at it. On macOS, either run `sudo podman-mac-helper install`
 once, which links `/var/run/docker.sock` to the machine's socket, or export
-`DOCKER_HOST=unix://` followed by the path that
-`podman machine inspect --format '{{.ConnectionInfo.PodmanSocket.Path}}'`
-prints. On Linux, enable the socket with
-`systemctl --user enable --now podman.socket` and export
+`DOCKER_HOST=unix://` followed by the path that `podman machine inspect
+--format '{{.ConnectionInfo.PodmanSocket.Path}}'` prints. On Linux, enable the
+socket by running `systemctl --user enable --now podman.socket` and export
 `DOCKER_HOST=unix://$XDG_RUNTIME_DIR/podman/podman.sock`. `setup.sh` checks
 this before building anything and prints these steps if k3d cannot connect.
 
-Standing up the stack downloads from the public internet: `github.com`, `docker.io`,
-`gcr.io`, `ghcr.io`, `codeberg.org`, `proxy.golang.org`, `crates.io`, and
-`prometheus-community.github.io`, plus the registries the kube-prometheus-stack
-chart names for its images.
+Starting up the stack downloads from
+- `github.com`
+- `docker.io`
+- `gcr.io`
+- `ghcr.io`
+- `codeberg.org`
+- `proxy.golang.org`
+- `crates.io`
+- `prometheus-community.github.io`
+- the registries the kube-prometheus-stack chart names for its images.
 
-After that, nothing written for this repository makes a request outside the
-cluster, and the third-party defaults known to phone home are turned off in
-the manifests: Grafana's usage reporting and update checks, and Forgejo's
-avatar fetching. Flux still re-fetches the chart index hourly, and the other
-components have not been audited. Nothing here is air-gapped; block egress at
-the podman machine if you need it to be.
+After startup, nothing written for this repository makes a request outside the
+cluster, and the third-party telemetry defaults that do so are turned off in
+the manifests
+- Grafana usage reporting and update checks
+- Forgejo avatar fetching
 
-A podman machine with 4 CPUs and 8 GiB of memory brings the stack up in less than
-ten minutes from a cold start and uses about 5 GiB of disk while it is up.
-`setup.sh` requires at least 4 GiB of memory and checks for every command
-above, a running podman machine, and a reachable engine socket before it
-builds. [docs/topology.md](docs/topology.md) has the measured peaks.
+Flux still re-fetches the chart index hourly, and the other components have
+not been audited. This project is not air-gapped; block egress at the podman
+machine if you need it.
+
+The stack has been tested to start up on a podman machine with 4 CPUs and
+8 GiB of memory in less than ten minutes from a cold start
+and uses about 5 GiB of disk while it is up. `setup.sh` requires at least 4 GiB
+of memory and checks for every command above, a running podman machine, and
+a reachable engine socket before it builds. [docs/topology.md](docs/topology.md)
+has more details.
 
 ## Running example-stack
+
+The project is intended to be run with make targets that call bash scripts.
 
 ```sh
 make up        # registry, cluster, images, GitOps, monitoring, services, smoke
@@ -94,25 +129,26 @@ make smoke     # exercise the service APIs
 make validate  # pods, ingress, metrics, Prometheus targets, Flux
 make build     # registry, proto code, image builds and pushes
 make down      # delete cluster, registry, network, kubeconfig
-make lint      # shellcheck, actionlint, semgrep; needs no cluster
-make test      # Go and Rust unit tests; needs no cluster
+make lint      # shellcheck, actionlint, kustomize build, semgrep; needs no cluster
+make test      # Go, Rust, and Python unit tests; needs no cluster
 ```
 
-Each cluster target runs one script in `scripts/` with its defaults:
+Each cluster target runs one script in `scripts/` with its defaults -
 `setup.sh`, `smoke-test.sh`, `validate-stack.sh`, `build.sh`, and
-`teardown.sh`. To pass flags, run the script itself with `bash`; every script
-takes `--help` and configures itself by flag.
+`teardown.sh`. To override the defaults, run scripts directly via `bash` - the
+scripts take `--help` and document their supported flags.
 
-`setup.sh` calls `build.sh`, so a bare `bash scripts/setup.sh` on a clean
-machine does everything, and it exits non-zero if the smoke test at the end
-fails. The scripts are idempotent and can be safely rerun. Reset any applied
-scenario before rerunning `setup.sh`, because its seed push restores the
-manifests in Forgejo but not the database, so a scenario that changed the
-schema stays broken until its script is run with `--reset`. `teardown.sh` keeps
-the built images by default; passing `--remove-images` deletes them.
+`setup.sh` calls `build.sh`, so `make up` or a bare `bash scripts/setup.sh` on
+a clean machine runs everything, and it exits non-zero if the smoke test at
+the end fails. The scripts are idempotent and can be safely rerun. Reset any
+applied failure scenario before rerunning `setup.sh`, because its seed push
+restores the manifests in Forgejo but not the database - so a scenario that
+changed the schema stays broken until its script is run with `--reset`.
+`teardown.sh` keeps the built images by default; running it with the
+`--remove-images` flag deletes them.
 
-The cluster gets its own kubeconfig at `$HOME/.kube/example-stack.yaml` and
-never rewrites the default one:
+The cluster writes its own kubeconfig to `$HOME/.kube/example-stack.yaml` and
+never rewrites the default one.
 
 ```sh
 export KUBECONFIG=$HOME/.kube/example-stack.yaml
@@ -121,8 +157,9 @@ kubectl -n example-stack get pods
 
 ## Reaching example-stack
 
-The stack uses non-default host ports so it can run beside whatever else is on
-the machine. It claims three, and each one is overridable with a flag on `setup.sh`:
+`example-stack` uses non-default host ports to avoid conflicting with anything
+else running on the same machine. It claims three ports, each overridable
+with a flag on `setup.sh`:
 
 | Port | Purpose | setup.sh flag |
 |---|---|---|
@@ -130,16 +167,16 @@ the machine. It claims three, and each one is overridable with a flag on `setup.
 | 6551 | Kubernetes API | `--k8s-api-port` |
 | 5111 | local image registry | `--registry-port` |
 
-Everything is HTTP; no Ingress declares TLS, so the cluster publishes no HTTPS
-port. `--ingress-port` also rewrites the links on the landing page and in the
-UI.
+Everything is currently HTTP. No Ingress declares TLS, so the cluster publishes
+no HTTPS port. `--ingress-port` also rewrites the links on the landing page and
+in the UI.
 
 Everything HTTP is reachable at a `*.localhost` hostname. `curl`, Chrome, and
-Firefox resolve those names to 127.0.0.1 themselves, with no hosts-file
-editing, which is all the scripts and the links below need. Safari and every
-other tool use the system resolver, which does not resolve those names on
-macOS and does so on Linux only under systemd-resolved or nss-myhostname; for
-those, add one `/etc/hosts` entry per hostname below:
+Firefox will resolve those names to 127.0.0.1 themselves, which is all the
+scripts and the links below need. Safari and other tools use the system
+resolver, which does not resolve those names on macOS and does so on Linux
+only under systemd-resolved or nss-myhostname. If you need those, add one
+`/etc/hosts` entry per hostname below:
 
 | URL | Purpose |
 |---|---|
@@ -151,18 +188,18 @@ those, add one `/etc/hosts` entry per hostname below:
 | http://grafana.localhost:8090/ | Grafana |
 | http://prometheus.localhost:8090/ | Prometheus |
 
-`go-grpc` speaks HTTP/2 only and is not exposed through the ingress. You can reach it
-with a port-forward:
+`go-grpc` only speaks HTTP/2 and is not exposed through the ingress. You can
+reach it with a port-forward
 
 ```sh
 kubectl -n example-stack port-forward svc/go-grpc 29090:9090
 grpcurl -plaintext localhost:29090 echo.v1.EchoService/Health
 ```
 
-The smoke test opens its own forward on 19090, so a manual one on that port
-would collide with it.
+The smoke test script opens its own forward on 19090, so a manual one on
+that port would collide with it.
 
-Every credential is a demo-only default, so the stack comes up the same
+**Every credential is a demo-only default**, so the stack comes up the same
 way on any machine. None of it is a production secret.
 
 | System | Credential | Where it is set |
@@ -175,13 +212,13 @@ way on any machine. None of it is a production secret.
 
 The PostgreSQL container runs with `POSTGRES_HOST_AUTH_METHOD=trust`, so the
 password is never checked and any connection from inside the cluster is
-accepted. The value is there because the services and the migration Jobs build
-a connection string from it. The browser UI never holds the bearer token: nginx
+accepted (the value is there because the services and the migration Jobs build
+a connection string from it). The browser UI never holds the bearer token: nginx
 injects it server-side from the Secret, through the envsubst step in
 `k8s/apps/base/ui/nginx.conf.template`, so the token has one home.
 
 `setup.sh` sets the Forgejo bootstrap password on every run. Pass
-`--forgejo-password` for a different one, or change it afterwards:
+`--forgejo-password` to override the default or change it afterwards
 
 ```sh
 kubectl -n forgejo exec deploy/forgejo -- \
@@ -190,23 +227,26 @@ kubectl -n forgejo exec deploy/forgejo -- \
 
 ## Failure scenarios
 
-Each failure scenario pushes a kustomize overlay to Forgejo, which Flux reconciles, and
-each reverts with `--reset`.
+Each failure scenario pushes a kustomize overlay to Forgejo, which Flux
+then reconciles. Each scenario is reverted by running its associated script
+with `--reset`.
 
-| Scenario | What breaks |
+| Scenario | Description |
 |---|---|
-| 1: broken service port | The `go-grpc` Service targets the wrong port. The pod stays healthy, the traffic is dropped, `go-api` order creation returns 502. |
-| 2: bad migration | A migration renames a column. The Job succeeds, and `rust-inventory` queries start returning 500. |
-| 3: pricing assumption | `go-grpc` returns a different currency for one warehouse. Both services are healthy, and orders for that warehouse fail with 422. |
+| broken service port (1) | The `go-grpc` Service targets the wrong port. The pod stays healthy, the traffic is dropped, `go-api` order creation returns 502. |
+| bad migration (2) | A migration renames a column. The Job succeeds, and `rust-inventory` queries start returning 500. |
+| invalid pricing assumption (3) | `go-grpc` returns a different currency for one warehouse. Both services are healthy, and orders for that warehouse fail with 422. |
 
+To run scenario 1 and revert to the baseline state, you'd execute
 ```sh
 bash scenarios/scenario-1-broken-service/demo.sh
 bash scenarios/scenario-1-broken-service/demo.sh --reset
 ```
 
-`--verify` asserts the result: with an apply, the symptoms the scenario page
-documents; with `--reset`, the baseline. Each assertion prints PASS or FAIL,
-and a failed one exits `demo.sh` non-zero.
+Running the scenario script with the `--verify` flag asserts the scenario's
+breakage when applying the change. Running it with `--reset --verify`
+asserts that the baseline is restored. Each assertion prints
+PASS or FAIL, and a failed one exits `demo.sh` non-zero.
 
 ```sh
 bash scenarios/scenario-1-broken-service/demo.sh --verify
@@ -237,8 +277,10 @@ There are four layers of testing. All exit non-zero on failure.
   ingress resolution, `/metrics` endpoints, Prometheus scrape targets, alert
   rules loaded, alerts not firing, and Flux reconciliation status. It does not
   run the scenarios.
-- **`--verify` on a scenario's `demo.sh`** checks that the scenario broke what it
-  expects to break, and that `--reset` put the stack back correctly.
+- **`--verify` on a scenario's `demo.sh`** checks that the scenario broke what
+  it expects to break, and that `--reset` put the stack back correctly.
+
+To run the tests execute `make test` or
 
 ```sh
 go build ./... && go vet ./... && go test ./...
@@ -248,53 +290,55 @@ go build ./... && go vet ./... && go test ./...
 ## Building
 
 Image builds are Dockerfile builds run by podman through `scripts/build.sh`,
-which regenerates the proto code first. Generated proto code is committed;
-regenerate it, don't edit it by hand.
+which regenerates the proto code first. Generated proto code is committed.
+You should regenerate it, don't edit it by hand.
 
-The application images, their base images, and PostgreSQL are pinned by tag and
-digest. Flux is installed from the release manifest for a pinned version, and
-the monitoring stack is pinned to a chart version; the images inside those two
-are whatever the release and the chart name.
+The application images, their base images, and PostgreSQL are pinned by tag
+and digest. Flux is installed from the release manifest for a pinned version.
+The monitoring stack is pinned to a chart version. The images in Flux and the
+monitoring stack are whatever the release and the chart specify.
 
 ## Contributing
 
-This is an individually maintained project. Pull requests are appreciated,
-review may take a while, and some will not be accepted. Every commit needs a
-`Signed-off-by:` trailer, which `git commit -s` adds;
-[CONTRIBUTING.md](.github/CONTRIBUTING.md) has the rest.
+Pull requests are appreciated, but reviews may take a while and some
+contributions will not be accepted. Every commit requires a
+`Signed-off-by:` trailer, which `git commit -s` will add for you. See
+[CONTRIBUTING.md](.github/CONTRIBUTING.md) for details.
 
-Install the commit hooks once:
+When developing locally, install the commit hooks once with
 
 ```sh
 prek install
 ```
 
-They run `gofmt`, `go vet`, `cargo fmt --check`, `cargo clippy`, shellcheck
-over the scripts, and actionlint over the workflows, at the versions pinned in
-the Makefile; shellcheck and actionlint are downloaded into `./bin/tools`
-against a checksum. semgrep is not in the hook, because it starts a container
-and fetches its rules on every run. `make lint` runs it by hand, from the PATH
-when that version is installed or from its pinned container when podman is
-running, and the workflow always runs it. Tests are not in the hook either:
-`make test` runs them, and so do the workflows.
+The precommit hooks will run
+-  `gofmt`, `go vet`, `cargo fmt --check`, and `cargo clippy`
+- `shellcheck` on the scripts
+- `actionlint` on the workflows
+- `kustomize` build of manifest directories and scenario overlays
 
-Nothing runs directly on push currently. Both workflows are dispatched against a branch before
-merge:
+at the versions pinned in the Makefile. `shellcheck`, `actionlint`, and
+`kustomize` are downloaded into `./bin/tools` and the binary checksums are
+validated. `semgrep` runs premerge in GitHub workflows but is not in the
+precommit hook, because it starts a container and fetches its rules on every
+run. `make lint` runs `semgrep` manually, from the PATH when the pinned
+version is installed or from its pinned container when podman is running, and
+the workflow always runs it. Tests are not in the hook, either, but `make
+test` runs them, and they also run premerge in GitHub workflows.
 
-```sh
-gh workflow run checks.yml --ref <branch>   # gofmt, go vet, go test, shellcheck, actionlint, semgrep
-gh workflow run rust.yml --ref <branch>     # cargo fmt, clippy, and cargo test
-```
-
-As a result they don't appear as pull request checks. You can list results with
-`gh run list --workflow=checks.yml` and `gh run list --workflow=rust.yml`.
+The GitHub workflows run on pull requests and on pushes to `main`, and
+appear as checks on the pull request. `checks.yml` runs gofmt, go vet, go
+test with the race detector, the Python tests, shellcheck, actionlint, the
+kustomize build, and semgrep. `rust.yml` runs cargo fmt, clippy, and cargo
+test. Both support manual workflow dispatch.
 
 Dependabot opens monthly pull requests for Go modules, Rust crates, the
 Dockerfile base images, and the GitHub Actions. Go and Rust minor and patch
-updates are grouped and majors come alone; image and action updates are
+updates are grouped and majors come alone. Image and action updates are
 grouped whatever their size. The Rust build image is on Dependabot's ignore
-list and moves by hand together with `rust-toolchain.toml`, and so do
-the images and chart versions pinned in the manifests and scripts.
+list and is updated by hand with `rust-toolchain.toml`. The images and chart
+versions pinned in the manifests and scripts have no Dependabot ecosystem and
+are updated by hand too.
 
 ## License
 

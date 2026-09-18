@@ -1,8 +1,11 @@
 name: checks
 
-# Dispatched, never triggered: run it against a branch before merge with
-# `gh workflow run checks.yml --ref <branch>`. Nothing runs on push.
+# Runs on pull requests and on pushes to main. workflow_dispatch stays
+# for running it against a branch by hand.
 on:
+  pull_request:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -15,6 +18,12 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      # The pinned tools make lint downloads into bin/tools, keyed on the
+      # Makefile that pins them, so a repin misses and a plain run hits.
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: bin/tools
+          key: tools-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Makefile') }}
       # hashFiles is available on steps, not on jobs, so each language gates
       # its own steps after checkout. There is no Node code today; the node
       # job below stays so a UI rewrite gets its checks without a workflow
@@ -28,10 +37,13 @@ jobs:
       - if: hashFiles('**/go.mod') != ''
         run: go vet ./...
       - if: hashFiles('**/go.mod') != ''
-        run: go test ./...
-      # Static checks that need no cluster: shellcheck and actionlint from
-      # the pins in the Makefile, semgrep from its digest-pinned container
-      # through the runner's docker. CI is set here, so a skip fails.
+        run: go test -race ./...
+      # The Prometheus reader every --verify depends on.
+      - run: python3 -m unittest discover -s scripts -p 'promjson_test.py'
+      # Static checks that need no cluster: shellcheck, actionlint, and
+      # kustomize from the pins in the Makefile, semgrep from its
+      # digest-pinned container through the runner's docker. CI is set here,
+      # so a skip fails.
       - run: make lint
 
   node:
