@@ -46,6 +46,12 @@ and `unzip`. macOS and Linux are the supported platforms; a minimal Linux
 install may need one or more of those four added. `grpcurl` is optional; the
 smoke test skips its gRPC checks if it is not present.
 
+podman is the only engine currently supported. It needs no license on a
+company laptop, where Docker Desktop may, and the scripts call it directly for
+builds, the registry, and the network. k3d itself works over the docker
+socket, so docker support is an engine variable through four scripts plus a
+machine to test it on.
+
 `helm`, `flux`, and `protoc` are not necessary: Flux is installed from a pinned
 upstream manifest, the monitoring stack is a `HelmRelease` that Flux reconciles
 inside the cluster, and `scripts/build.sh` downloads a pinned protoc into
@@ -83,16 +89,19 @@ builds. [docs/topology.md](docs/topology.md) has the measured peaks.
 ## Running example-stack
 
 ```sh
-bash scripts/setup.sh            # registry, cluster, images, GitOps, monitoring, services, smoke
-bash scripts/smoke-test.sh       # exercise the service APIs
-bash scripts/validate-stack.sh   # pods, ingress, metrics, Prometheus targets, Flux
-bash scripts/build.sh            # registry, proto code, image builds and pushes
-bash scripts/teardown.sh         # delete cluster, registry, network, kubeconfig
+make up        # registry, cluster, images, GitOps, monitoring, services, smoke
+make smoke     # exercise the service APIs
+make validate  # pods, ingress, metrics, Prometheus targets, Flux
+make build     # registry, proto code, image builds and pushes
+make down      # delete cluster, registry, network, kubeconfig
+make lint      # shellcheck, actionlint, semgrep; needs no cluster
+make test      # Go and Rust unit tests; needs no cluster
 ```
 
-The Makefile targets for those steps are `make up`, `make smoke`, `make validate`,
-`make build`, and `make down`. There are targets for `make lint` and `make test`, which need no
-cluster. Scripts are run with `bash`, take `--help`, and configure themselves by flag.
+Each cluster target runs one script in `scripts/` with its defaults:
+`setup.sh`, `smoke-test.sh`, `validate-stack.sh`, `build.sh`, and
+`teardown.sh`. To pass flags, run the script itself with `bash`; every script
+takes `--help` and configures itself by flag.
 
 `setup.sh` calls `build.sh`, so a bare `bash scripts/setup.sh` on a clean
 machine does everything, and it exits non-zero if the smoke test at the end
@@ -125,12 +134,12 @@ Everything is HTTP; no Ingress declares TLS, so the cluster publishes no HTTPS
 port. `--ingress-port` also rewrites the links on the landing page and in the
 UI.
 
-Everything HTTP is reachable at a `*.localhost` hostname. `curl` and every
-major browser resolve those names to 127.0.0.1 with no hosts-file editing,
-which is all the scripts and the links below need. The system resolver does not
-resolve those names to 127.0.0.1 on macOS, and does so on Linux only under
-systemd-resolved or nss-myhostname; for any other tool on macOS, or on a Linux
-host with neither, add one `/etc/hosts` entry per hostname below:
+Everything HTTP is reachable at a `*.localhost` hostname. `curl`, Chrome, and
+Firefox resolve those names to 127.0.0.1 themselves, with no hosts-file
+editing, which is all the scripts and the links below need. Safari and every
+other tool use the system resolver, which does not resolve those names on
+macOS and does so on Linux only under systemd-resolved or nss-myhostname; for
+those, add one `/etc/hosts` entry per hostname below:
 
 | URL | Purpose |
 |---|---|
@@ -146,9 +155,12 @@ host with neither, add one `/etc/hosts` entry per hostname below:
 with a port-forward:
 
 ```sh
-kubectl -n example-stack port-forward svc/go-grpc 19090:9090
-grpcurl -plaintext localhost:19090 echo.v1.EchoService/Health
+kubectl -n example-stack port-forward svc/go-grpc 29090:9090
+grpcurl -plaintext localhost:29090 echo.v1.EchoService/Health
 ```
+
+The smoke test opens its own forward on 19090, so a manual one on that port
+would collide with it.
 
 Every credential is a demo-only default, so the stack comes up the same
 way on any machine. None of it is a production secret.
@@ -246,20 +258,25 @@ are whatever the release and the chart name.
 
 ## Contributing
 
+This is an individually maintained project. Pull requests are appreciated,
+review may take a while, and some will not be accepted. Every commit needs a
+`Signed-off-by:` trailer, which `git commit -s` adds;
+[CONTRIBUTING.md](.github/CONTRIBUTING.md) has the rest.
+
 Install the commit hooks once:
 
 ```sh
 prek install
 ```
 
-They run `gofmt`, `go vet`, `cargo fmt --check`, `cargo clippy`, and
-`make lint`, which runs shellcheck over the scripts, actionlint over the
-workflows, and semgrep's Go ruleset over the Go code, at the versions pinned
-in the Makefile. shellcheck and actionlint are downloaded into `./bin/tools`
-against a checksum. semgrep runs from the PATH when that version is installed,
-or from its pinned container when podman is running, and is otherwise skipped
-locally; the workflow always runs it. Tests are not in the hook: `make test`
-runs them, and so do the workflows.
+They run `gofmt`, `go vet`, `cargo fmt --check`, `cargo clippy`, shellcheck
+over the scripts, and actionlint over the workflows, at the versions pinned in
+the Makefile; shellcheck and actionlint are downloaded into `./bin/tools`
+against a checksum. semgrep is not in the hook, because it starts a container
+and fetches its rules on every run. `make lint` runs it by hand, from the PATH
+when that version is installed or from its pinned container when podman is
+running, and the workflow always runs it. Tests are not in the hook either:
+`make test` runs them, and so do the workflows.
 
 Nothing runs directly on push currently. Both workflows are dispatched against a branch before
 merge:
@@ -273,6 +290,12 @@ As a result they don't appear as pull request checks. You can list results with
 `gh run list --workflow=checks.yml` and `gh run list --workflow=rust.yml`.
 
 Dependabot opens monthly pull requests for Go modules, Rust crates, the
-Dockerfile base images, and the GitHub Actions, with minor and patch updates
-grouped. The images and chart versions pinned in the manifests and scripts are
-updated by hand.
+Dockerfile base images, and the GitHub Actions. Go and Rust minor and patch
+updates are grouped and majors come alone; image and action updates are
+grouped whatever their size. The Rust build image is left to Dependabot's
+ignore list and moves by hand together with `rust-toolchain.toml`, and so do
+the images and chart versions pinned in the manifests and scripts.
+
+## License
+
+[Apache License, Version 2.0](LICENSE).

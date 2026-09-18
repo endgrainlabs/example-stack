@@ -31,7 +31,7 @@ Notable status codes: 401 without a token, 409 when stock is
 insufficient, 422 when pricing returns a currency other than USD, and 502 when a
 backend call fails.
 
-What a tool can check here:
+What a careful observer can check:
 
 - Health and readiness return 200 while the database is reachable.
 - Order creation exercises the whole call graph: inventory lookup, pricing,
@@ -72,7 +72,7 @@ files. The protos are `go-grpc/proto/echo.proto` and
 identifier ends in that suffix in that currency. It is empty by default, so
 every price is USD. Scenario 3 sets it.
 
-What a tool can check here:
+What a careful observer can check:
 
 - Health returns `SERVING`, and uptime increases between calls, which shows the
   process did not restart.
@@ -121,7 +121,7 @@ Seed data, also from the migration Job:
 | `a0000000-0000-0000-0000-000000000002` | Gadget | 50 | west |
 | `a0000000-0000-0000-0000-000000000003` | Sprocket | 200 | east |
 
-What a tool can check here:
+What a careful observer can check:
 
 - Health returns 200 whatever the database is doing; readiness returns 200 only
   while the database is connected.

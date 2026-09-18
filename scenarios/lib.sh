@@ -276,10 +276,16 @@ scenario_assert_increased() {
             ${traffic} >/dev/null 2>&1 || true
         fi
         actual=$(scenario_prom_query "${query}")
-        if awk -v a="${actual}" -v b="${before}" 'BEGIN { exit !(a > b) }' 2>/dev/null; then
-            echo "  PASS  ${description} (${before} to ${actual})"
-            return 0
-        fi
+        # A reading that is not a number is a failed query, not a counter
+        # value: awk compares "error" with 0 as strings and calls it a rise.
+        case "${actual}" in
+            ''|*[!0-9.eE+-]*) ;;
+            *)
+                if awk -v a="${actual}" -v b="${before}" 'BEGIN { exit !(a > b) }' 2>/dev/null; then
+                    echo "  PASS  ${description} (${before} to ${actual})"
+                    return 0
+                fi ;;
+        esac
         if [ "$(date +%s)" -ge "${deadline}" ]; then
             break
         fi
