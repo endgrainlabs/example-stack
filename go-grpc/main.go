@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 
 	pb "github.com/endgrainlabs/example-stack/go-grpc/proto/echopb"
 	ppb "github.com/endgrainlabs/example-stack/go-grpc/proto/pricingpb"
+	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/recovery"
 	grpcprom "github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"google.golang.org/grpc"
@@ -147,6 +149,15 @@ func checkAuth(ctx context.Context) error {
 	return nil
 }
 
+// recoverPanic turns a panic in a handler into an Internal error for that
+// request, with the stack in the log, so a bug reached through a request
+// shows up as an error rate rather than as a restarted process. The client
+// gets no detail: the stack is for the operator.
+func recoverPanic(p any) error {
+	log.Printf("panic in handler: %v\n%s", p, debug.Stack())
+	return status.Error(codes.Internal, "internal error")
+}
+
 func main() {
 	startTime = time.Now()
 
@@ -177,9 +188,17 @@ func main() {
 		log.Fatal(fmt.Errorf("listen: %w", err))
 	}
 
+	// Prometheus outermost so a recovered panic is counted as the Internal
+	// error it becomes, not as a request that never finished.
 	srv := grpc.NewServer(
-		grpc.UnaryInterceptor(grpcprom.UnaryServerInterceptor),
-		grpc.StreamInterceptor(grpcprom.StreamServerInterceptor),
+		grpc.ChainUnaryInterceptor(
+			grpcprom.UnaryServerInterceptor,
+			recovery.UnaryServerInterceptor(recovery.WithRecoveryHandler(recoverPanic)),
+		),
+		grpc.ChainStreamInterceptor(
+			grpcprom.StreamServerInterceptor,
+			recovery.StreamServerInterceptor(recovery.WithRecoveryHandler(recoverPanic)),
+		),
 	)
 	pb.RegisterEchoServiceServer(srv, &echoServer{})
 	ppb.RegisterPricingServiceServer(srv, &pricingServer{})

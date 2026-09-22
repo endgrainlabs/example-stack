@@ -77,7 +77,10 @@ metrics over HTTP.
 Authentication uses the `authorization: Bearer dev-token` metadata key.
 Reflection is enabled, so a client can discover the services without
 the proto files. The protos are `go-grpc/proto/echo.proto` and
-`go-grpc/proto/pricing.proto`.
+`go-grpc/proto/pricing.proto`. A panic in a handler is recovered by the
+go-grpc-middleware interceptor and answered with an `Internal` error for
+that request, with the stack in the log, so a bug reached through a
+request shows up as an error rate rather than as a restarted process.
 
 `REGIONAL_PRICING` is read once at startup: a comma-separated list of
 `SUFFIX=CURRENCY` rules, for example `002=EUR`, which prices every item
