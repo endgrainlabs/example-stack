@@ -1,7 +1,7 @@
 # Migration Jobs are named with a version suffix. When migration content
 # changes, bump the suffix (for example v1 to v2). Flux then creates a new Job
-# and leaves the completed one alone. Finished Jobs are garbage-collected after
-# 10 minutes.
+# and leaves the completed one alone. Completed Jobs stay: a TTL would delete
+# them, and Flux would re-create and re-run them on its next reconcile.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -9,7 +9,6 @@ metadata:
   namespace: example-stack
 spec:
   backoffLimit: 3
-  ttlSecondsAfterFinished: 600
   template:
     metadata:
       labels:
@@ -36,7 +35,6 @@ metadata:
   namespace: example-stack
 spec:
   backoffLimit: 3
-  ttlSecondsAfterFinished: 600
   template:
     metadata:
       labels:

@@ -146,8 +146,8 @@ spec:
             description: "Container {{ $labels.container }} in pod {{ $labels.pod }} has restarted {{ $value }} times in the last 10 minutes."
 
         # A Job pod that has finished is never ready again, so completed and
-        # failed pods are excluded. Without this the migration Jobs keep the
-        # alert firing until their ten minute garbage collection.
+        # failed pods are excluded. Without this the migration Jobs' pods
+        # would keep the alert firing for as long as they exist.
         - alert: ExampleAppNotReady
           expr: |
             kube_pod_status_ready{namespace="example-stack", condition="true"} == 0

@@ -44,6 +44,7 @@ data:
         <li><a href="http://grafana.localhost:8090/">Grafana</a> - kube-prometheus-stack dashboards. Per-service and consolidated views with service level objective gauges. Demo-only login: <code>admin</code> / <code>admin</code>.</li>
         <li><a href="http://prometheus.localhost:8090/">Prometheus</a> - metrics store, service level objective recording rules, alerting rules.</li>
         <li><a href="http://forgejo.localhost:8090/">Forgejo</a> - in-cluster Git source of truth. Flux reconciles the <code>endgrainlabs/example-stack</code> repository from here. Demo-only login: <code>bootstrap</code> / <code>password</code>.</li>
+        <li><a href="http://flagsmith.localhost:8090/">Flagsmith</a> - self-hosted feature flags. Seeded with the <code>example-stack</code> organization and project and the <code>staging</code> and <code>production</code> environments; no flags are defined and no service reads one yet. Demo-only login: <code>bootstrap@flagsmith.local</code> / <code>example-stack-demo</code>.</li>
       </ul>
 
       <h2>Authenticated endpoints</h2>

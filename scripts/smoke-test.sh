@@ -122,14 +122,9 @@ check_grpc() {
 # --- Migration jobs ---
 
 echo "==> Migration jobs"
-# Finished Jobs are garbage-collected ten minutes after completion, so on a
-# stack that has been up a while the Job is gone. Its absence is not a failure:
-# the seed-data checks below prove the migration ran.
+# Nothing deletes a completed Job, so a missing one means Flux never applied
+# it.
 for job in migrate-inventory-v1 migrate-orders-v1; do
-    if ! kubectl -n "${NAMESPACE}" get job "${job}" >/dev/null 2>&1; then
-        echo "  PASS  ${job} already garbage-collected"
-        continue
-    fi
     STATUS=$(kubectl -n "${NAMESPACE}" get job "${job}" -o jsonpath='{.status.succeeded}' 2>/dev/null || echo "0")
     if [ "${STATUS}" = "1" ]; then
         echo "  PASS  ${job} succeeded"

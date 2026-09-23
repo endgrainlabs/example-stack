@@ -5,4 +5,5 @@ resources:
   - kustomization-apps.yaml
   - kustomization-monitoring.yaml
   - kustomization-monitoring-flux.yaml
+  - kustomization-flagsmith.yaml
   - receiver.yaml

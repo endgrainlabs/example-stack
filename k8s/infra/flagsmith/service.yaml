@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: flagsmith
+  namespace: flagsmith
+  labels:
+    app: flagsmith
+spec:
+  selector:
+    app: flagsmith
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+    # Flagsmith serves Prometheus metrics from a second HTTP server in a
+    # daemon thread, not from the API port, so the scrape target is its own
+    # port. 9100 is the port that server binds.
+    - name: prom
+      port: 9100
+      targetPort: 9100

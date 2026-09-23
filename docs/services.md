@@ -184,20 +184,24 @@ infrastructure interface with the ports this stack uses.
 
 ## PostgreSQL and the migrations
 
-There is a single PostgreSQL 17 Deployment that holds both databases.
-`inventory` is created by the image's own initialization; `orders` is created
-by an initialization script mounted from a ConfigMap. Data is on a 100Mi
-local-path volume, which survives pod restarts and `k3d cluster stop` and is
-lost on cluster delete.
+There is a single PostgreSQL 17 Deployment that holds every database in the
+stack. `inventory` is created by the image's own initialization; `orders` and
+`flagsmith` are created by an initialization script mounted from a ConfigMap,
+which the image runs only against an empty data directory, so they appear on
+a fresh volume and not on a restart. Data is on a 100Mi local-path volume,
+which survives pod restarts and `k3d cluster stop` and is lost on cluster
+delete.
 
-Schema and seed data are applied by Kubernetes Jobs running
-[goose](https://github.com/pressly/goose), not by services. The services
-expect the schema to exist and fail if it does not.
+Schema and seed data are applied by Kubernetes Jobs, not by services:
+[goose](https://github.com/pressly/goose) for the two service databases,
+Flagsmith's own Django migrations for its. The services expect the schema
+to exist and fail if it does not.
 
 | Job | Database | Description |
 |---|---|---|
 | `migrate-inventory-v1` | `inventory` | Creates the inventory table and seeds three items |
 | `migrate-orders-v1` | `orders` | Creates the orders table |
+| `migrate-flagsmith-v1` | `flagsmith` | Runs Flagsmith's own Django migrations from its image, not goose |
 
 The migration SQL lives in `migrate/migrations/inventory/` and
 `migrate/migrations/orders/`, embedded into the `migrate` binary
@@ -206,12 +210,62 @@ filesystem directory after the embedded set, against the same
 `goose_db_version` table, which is how scenario 2 adds a migration
 without a variant image. Job names carry a version suffix: when
 migration content changes, the suffix is bumped, so Flux creates a new
-Job and leaves the completed one alone. Finished Jobs are
-garbage-collected after ten minutes.
+Job and leaves the completed one alone. Completed Jobs stay: a TTL would
+delete them, and Flux would re-create and re-run them on its next
+reconcile.
 
 On a fresh cluster the services may restart once or twice while the
 migration Jobs run. Those restarts show up in
 `kube_pod_container_status_restarts_total`.
+
+## Flagsmith
+
+Flagsmith is a self-hosted feature flag server, deployed by Flux from
+`k8s/infra/flagsmith` into its own `flagsmith` namespace the way the
+monitoring stack is. It is the unified image, so one container serves both
+the API and the web interface on port 8000, reachable at
+`http://flagsmith.localhost:8090/`. Its schema lives in the `flagsmith`
+database in the shared PostgreSQL and is applied by the
+`migrate-flagsmith-v1` Job, not by the server.
+
+| Endpoint | Auth | Description |
+|---|---|---|
+| `GET /health/liveness/` | No | Liveness. Returns `{"status": "ok"}` without touching the database |
+| `GET /health/readiness/` | No | Readiness. 200 while the database is reachable and no migration is outstanding, 500 otherwise |
+| `GET /metrics/` on port 9100 | No | Prometheus metrics, from a second HTTP server in the same process. A `ServiceMonitor` registers it |
+| `/api/v1/...` | Yes | The Flagsmith REST API. `Authorization: Token <key>` for the admin API, `X-Environment-Key: <key>` for the SDK endpoints |
+
+`scripts/setup.sh` seeds it after Flux has reconciled it: a bootstrap account,
+an organization and a project both named `example-stack`, and exactly two
+environments, `staging` and `production`. No feature flags are created, and
+no service in this stack reads a flag yet.
+
+The two environments' client-side keys are written into a
+`flagsmith-bootstrap` Secret in the `example-stack` namespace, under the keys
+`staging` and `production`, alongside the bootstrap account's API token under
+`admin-token`. Flagsmith generates all three at seed time, so they cannot live
+in the manifests Flux reconciles; `setup.sh` writes the Secret with
+`kubectl`. Flux prunes only what it applied, so a reconcile leaves the Secret
+alone, and the `app.kubernetes.io/managed-by` label on it records which script
+owns it. Nothing mounts it yet.
+
+The dashboard reads its own feature flags from a Flagsmith project too, the
+vendor's hosted one by default. The seed creates a second organization and
+project, both `flagsmith-dashboard`, with one environment, `dashboard`, and
+no flags, since the dashboard has a built-in default for each. The
+organization exists because Flagsmith's free plan, the default when
+self-hosting too, allows one project per organization. Its client-side key
+goes into a
+`flagsmith-dashboard` Secret in the `flagsmith` namespace, under
+`client-key`, which the Deployment reads as `FLAGSMITH_ON_FLAGSMITH_API_KEY`;
+`setup.sh` restarts Flagsmith when the key changes, because Django reads it
+only at startup.
+
+The bootstrap login is `bootstrap@flagsmith.local` with the password
+`--flagsmith-password` sets, `example-stack-demo` by default. It is a
+demo-only credential like every other one in this stack. Flagsmith runs
+Django's password validators on signup, so a short or common password is
+rejected.
 
 ## How the services are built
 

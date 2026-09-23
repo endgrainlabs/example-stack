@@ -28,6 +28,10 @@ is self-contained after startup (see [Prerequisites](#prerequisites) and
   - node-exporter
   - Pre-configured with per-service dashboards, recording rules for error rate
     and latency, and alerting rules.
+- Flagsmith, self-hosted, for feature flags
+  - Seeded with an `example-stack` organization and project and two
+    environments, `staging` and `production`
+  - No flags are defined and no service reads one yet
 - A local image registry that the cluster pulls from.
 - Three failure scenarios that break the stack in a specific way and revert.
 
@@ -39,7 +43,7 @@ go-grpc/         Go gRPC pricing and echo service, and its protos
 rust-inventory/  Rust HTTP inventory service
 migrate/         goose migration runner and the migration SQL
 k8s/apps/base/   the services, their Ingresses, dashboards, and alert rules
-k8s/infra/       Forgejo, Flux, and the monitoring stack
+k8s/infra/       Forgejo, Flux, the monitoring stack, and Flagsmith
 scenarios/       the failure scenarios and their overlays
 scripts/         bring-up, teardown, build, smoke, validation
 docs/            topology, services, scenarios
@@ -97,6 +101,7 @@ Starting up the stack downloads from
 - `gcr.io`
 - `ghcr.io`
 - `codeberg.org`
+- `docker.flagsmith.com`, which redirects to `docker.io`
 - `proxy.golang.org`
 - `crates.io`
 - `prometheus-community.github.io`
@@ -107,6 +112,10 @@ cluster, and the third-party telemetry defaults that do so are turned off in
 the manifests
 - Grafana usage reporting and update checks
 - Forgejo avatar fetching
+- Flagsmith's telemetry heartbeat. Its dashboard's own feature flags are read
+  from the stack's Flagsmith rather than Flagsmith's hosted service, as
+  Flagsmith's docs describe; a dashboard opened during bring-up, before the
+  seed, still reads them from the hosted service
 
 Flux still re-fetches the chart index hourly, and the other components have
 not been audited. This project is not air-gapped; block egress at the podman
@@ -124,9 +133,11 @@ has more details.
 The project is intended to be run with make targets that call bash scripts.
 
 ```sh
-make up        # registry, cluster, images, GitOps, monitoring, services, smoke
+make up        # registry, cluster, images, GitOps, monitoring, services,
+               # Flagsmith, smoke
 make smoke     # exercise the service APIs
-make validate  # pods, ingress, metrics, Prometheus targets, Flux
+make validate  # pods, ingress, host port boundary, metrics, Prometheus
+               # targets, the Flagsmith seed, Flux
 make build     # registry, proto code, image builds and pushes
 make down      # delete cluster, registry, network, kubeconfig
 make lint      # shellcheck, actionlint, kustomize build, semgrep; needs no cluster
@@ -140,7 +151,9 @@ scripts take `--help` and document their supported flags.
 
 `setup.sh` calls `build.sh`, so `make up` or a bare `bash scripts/setup.sh` on
 a clean machine runs everything, and it exits non-zero if the smoke test at
-the end fails. The scripts are idempotent and can be safely rerun. Reset any
+the end fails. The scripts are idempotent and can be safely rerun, with one
+caveat about the Flagsmith password noted under
+[Reaching example-stack](#reaching-example-stack). Reset any
 applied failure scenario before rerunning `setup.sh`, because its seed push
 restores the manifests in Forgejo but not the database - so a scenario that
 changed the schema stays broken until its script is run with `--reset`.
@@ -167,9 +180,19 @@ with a flag on `setup.sh`:
 | 6551 | Kubernetes API | `--k8s-api-port` |
 | 5111 | local image registry | `--registry-port` |
 
+All three are bound to 127.0.0.1 on the host, so nothing in the stack is
+reachable from the network the machine is on. The `*.localhost` names resolve
+locally and were never the boundary; the loopback binding is.
+
+`validate-stack.sh` takes the same three port flags, `--ingress-port`,
+`--k8s-api-port`, and `--registry-port`. It checks each port for that binding,
+so if the defaults were changed on `setup.sh`, the same values have to be
+given here or the boundary check probes ports nothing is listening on and
+fails.
+
 Everything is currently HTTP. No Ingress declares TLS, so the cluster publishes
-no HTTPS port. `--ingress-port` also rewrites the links on the landing page and
-in the UI.
+no HTTPS port. `--ingress-port` also rewrites the links on the landing page,
+in the UI, and in the pages Flagsmith builds for itself.
 
 Everything HTTP is reachable at a `*.localhost` hostname. `curl`, Chrome, and
 Firefox will resolve those names to 127.0.0.1 themselves, which is all the
@@ -187,6 +210,7 @@ only under systemd-resolved or nss-myhostname. If you need those, add one
 | http://forgejo.localhost:8090/ | Forgejo |
 | http://grafana.localhost:8090/ | Grafana |
 | http://prometheus.localhost:8090/ | Prometheus |
+| http://flagsmith.localhost:8090/ | Flagsmith |
 
 `go-grpc` only speaks HTTP/2 and is not exposed through the ingress. You can
 reach it with a port-forward
@@ -209,6 +233,7 @@ way on any machine. None of it is a production secret.
 | Forgejo | user `bootstrap`, password `password` | `--forgejo-password` on `scripts/setup.sh` |
 | Grafana | `admin` / `admin` | `k8s/infra/monitoring/helmrelease.yaml` |
 | Flux Receiver webhook | shared secret `example-stack-webhook-secret` | `k8s/infra/flux/receiver.yaml` |
+| Flagsmith | `bootstrap@flagsmith.local` / `example-stack-demo` | `--flagsmith-password` on `scripts/setup.sh` |
 
 The PostgreSQL container runs with `POSTGRES_HOST_AUTH_METHOD=trust`, so the
 password is never checked and any connection from inside the cluster is
@@ -216,6 +241,14 @@ accepted (the value is there because the services and the migration Jobs build
 a connection string from it). The browser UI never holds the bearer token: nginx
 injects it server-side from the Secret, through the envsubst step in
 `k8s/apps/base/ui/nginx.conf.template`, so the token has one home.
+
+Flagsmith's account is created once, on the first bring-up. Later runs do not
+reset its password: they log in with the one they are given, so every later
+`setup.sh` has to be given the same value. If you pass `--flagsmith-password`
+on the first run, pass it on every run. If you change the password in the
+Flagsmith web interface, pass the new value from then on, or the seed step
+fails at login. Flagsmith applies Django's password validators, so a short or
+common value is rejected at signup.
 
 `setup.sh` sets the Forgejo bootstrap password on every run. Pass
 `--forgejo-password` to override the default or change it afterwards
@@ -270,13 +303,15 @@ There are four layers of testing. All exit non-zero on failure.
   run the `rust-inventory` handlers that answer before a query: authentication,
   request validation, and liveness.
 - **`scripts/smoke-test.sh`** checks service behavior on a live stack:
-  migration Jobs succeeded or already garbage-collected, health and readiness,
+  migration Jobs succeeded, health and readiness,
   authentication rejection, the seeded inventory, order creation across the
   full call graph, insufficient stock, an unknown item, and the UI proxy paths.
 - **`scripts/validate-stack.sh`** checks the infrastructure: pod health,
-  ingress resolution, `/metrics` endpoints, Prometheus scrape targets, alert
-  rules loaded, alerts not firing, and Flux reconciliation status. It does not
-  run the scenarios.
+  ingress resolution, that each of the three host ports answers on 127.0.0.1
+  and not on the machine's own network address, `/metrics` endpoints,
+  Prometheus scrape targets, alert rules loaded, alerts not firing, that both
+  seeded Flagsmith environments answer for the keys the bring-up stored, and
+  Flux reconciliation status. It does not run the scenarios.
 - **`--verify` on a scenario's `demo.sh`** checks that the scenario broke what
   it expects to break, and that `--reset` put the stack back correctly.
 
