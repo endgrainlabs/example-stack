@@ -1,0 +1,131 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: flagsmith
+  namespace: flagsmith
+  labels:
+    app: flagsmith
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: flagsmith
+  template:
+    metadata:
+      labels:
+        app: flagsmith
+    spec:
+      containers:
+        - name: flagsmith
+          image: docker.flagsmith.com/flagsmith/flagsmith:2.273.0@sha256:6e9e8bac587865f272a0f81ad19b2c999b5b21a9514f878a7ecfabc1ab0ed7b1
+          # The image's own default is migrate-and-serve. Migrations run in
+          # the Job beside this file instead, so the server only serves; the
+          # readiness probe below holds the pod out of the Service until the
+          # Job has applied them.
+          args: ["serve"]
+          ports:
+            - name: http
+              containerPort: 8000
+            - name: prom
+              containerPort: 9100
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: flagsmith
+                  key: database-url
+            - name: DJANGO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: flagsmith
+                  key: django-secret-key
+            # Flagsmith builds the links in its own pages, including the
+            # password-reset link, from this, so it names the host ingress
+            # and not the in-cluster Service. setup.sh sets the port for
+            # --ingress-port.
+            - name: FLAGSMITH_DOMAIN
+              value: "flagsmith.localhost:8090"
+            # Demo-only: Django's host allowlist is open because this stack is
+            # reached on a local ingress under a name that follows
+            # --ingress-port, and the alternative is enumerating every name a
+            # developer might use to reach a throwaway cluster. What the
+            # allowlist usually protects is absolute links built from the Host
+            # header; the links Flagsmith puts in its emails come from
+            # FLAGSMITH_DOMAIN above instead, so opening it costs little here.
+            - name: DJANGO_ALLOWED_HOSTS
+              value: "*"
+            # Background work runs in a thread inside this process. The stack
+            # runs no separate task processor, which is the only other way
+            # Flagsmith has of running it.
+            - name: TASK_RUN_METHOD
+              value: "SEPARATE_THREAD"
+            - name: PROMETHEUS_ENABLED
+              value: "true"
+            # Flagsmith posts a heartbeat of object counts to
+            # api.flagsmith.com on every migrate, and defaults to on
+            # (ENABLE_TELEMETRY in api/app/settings/common.py). The migration
+            # Job beside this file is where it would fire; it is set here too
+            # so both containers of this pair are configured the same way.
+            - name: ENABLE_TELEMETRY
+              value: "false"
+            # The dashboard runs its own feature flags against Flagsmith's
+            # hosted service, on every page load, before anyone has logged in.
+            # Both settings default to None, and the view that builds the
+            # frontend's config omits a None, which leaves the key and URL the
+            # self-hosted bundle hardcodes in place
+            # (frontend/env/project_selfhosted.js). Empty strings are not None,
+            # so they replace them. The key is what stops the call: the SDK
+            # refuses an empty environment key before it opens a connection.
+            # The URL is blanked with it because the SDK's own fallback is the
+            # same hosted address, so clearing that alone would change nothing.
+            - name: FLAGSMITH_ON_FLAGSMITH_API_URL
+              value: ""
+            - name: FLAGSMITH_ON_FLAGSMITH_API_KEY
+              value: ""
+            # One of local, dev, staging, production. It picks defaults inside
+            # Flagsmith and is not the name of a Flagsmith environment.
+            - name: ENVIRONMENT
+              value: "production"
+            # One browser on a laptop needs one worker. The image defaults to
+            # three, and three Django processes do not fit under the memory
+            # limit below.
+            - name: GUNICORN_WORKERS
+              value: "1"
+          # Django and gunicorn take tens of seconds to answer on a laptop, so
+          # a startup probe holds the other two back rather than letting
+          # liveness restart a pod that is still booting. Readiness also fails
+          # while the migration Job has not finished, so the five minutes this
+          # budgets covers waiting for the Job as well as the boot.
+          startupProbe:
+            httpGet:
+              path: /health/readiness/
+              port: http
+            failureThreshold: 30
+            periodSeconds: 10
+            timeoutSeconds: 2
+          livenessProbe:
+            httpGet:
+              path: /health/liveness/
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 5
+          # Readiness runs django-health-check, which fails while the database
+          # is unreachable and while migrations are outstanding.
+          readinessProbe:
+            httpGet:
+              path: /health/readiness/
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 10
+          # Requests and the memory limit are the figures the Flagsmith chart
+          # suggests in its commented-out api.resources block. No CPU limit,
+          # like every other Deployment here: Django's startup throttled at
+          # 78% under the chart's 500m and fired CPUThrottlingHigh.
+          resources:
+            requests:
+              memory: 300Mi
+              cpu: 300m
+            limits:
+              memory: 500Mi

@@ -3,7 +3,9 @@ set -euo pipefail
 
 # Brings up the example stack: local registry, k3d cluster, images, an
 # in-cluster Forgejo holding the manifests, Flux reconciling from it, the
-# monitoring stack, the services, and a smoke test.
+# monitoring stack, the services, a seeded Flagsmith, and a smoke test. The
+# Forgejo and Flagsmith access tokens it mints are left behind in the
+# forgejo-bootstrap and flagsmith-bootstrap Secrets.
 #
 # Phases are ordered so a failure costs as little as possible. The registry and
 # the image builds run before any cluster exists, so a broken build never
@@ -13,7 +15,7 @@ set -euo pipefail
 #
 #   A. Builds       local registry up, service images built and pushed
 #   B. Cluster      k3d cluster created and wired to the registry
-#   C. Deploy       Forgejo, Flux, monitoring, services
+#   C. Deploy       Forgejo, Flux, monitoring, services, Flagsmith
 #   D. Smoke        smoke test against the running services
 #
 # Invoke with: bash scripts/setup.sh
@@ -34,6 +36,9 @@ K8S_API_PORT="6551"
 # --cluster-name alone gives that cluster its own kubeconfig file.
 KUBECONFIG_PATH=""
 FORGEJO_PASSWORD="password"
+# Flagsmith runs Django's password validators on signup, so the demo value
+# has to be long enough and not a common word.
+FLAGSMITH_PASSWORD="example-stack-demo"
 
 usage() {
     cat <<EOF
@@ -49,21 +54,26 @@ Config flags (all optional, defaults shown):
   --forgejo-password=PASS   password   (password for the Forgejo bootstrap
                             user, demo-only and visible in the process list
                             while setup runs)
+  --flagsmith-password=PASS example-stack-demo   (password for the Flagsmith
+                            bootstrap user, demo-only and visible in the
+                            process list while setup runs; Flagsmith rejects
+                            a short or common one)
   --help                    Show this message
 EOF
 }
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --cluster-name=*)     CLUSTER_NAME="${1#*=}" ;;
-        --registry-name=*)    REGISTRY_NAME="${1#*=}" ;;
-        --registry-port=*)    REGISTRY_PORT="${1#*=}" ;;
-        --ingress-port=*)     INGRESS_PORT="${1#*=}" ;;
-        --k8s-api-port=*)     K8S_API_PORT="${1#*=}" ;;
-        --kubeconfig-path=*)  KUBECONFIG_PATH="${1#*=}" ;;
-        --forgejo-password=*) FORGEJO_PASSWORD="${1#*=}" ;;
-        --help|-h)            usage; exit 0 ;;
-        *)                    echo "ERROR: unknown flag '$1'" >&2; echo "" >&2; usage >&2; exit 1 ;;
+        --cluster-name=*)       CLUSTER_NAME="${1#*=}" ;;
+        --registry-name=*)      REGISTRY_NAME="${1#*=}" ;;
+        --registry-port=*)      REGISTRY_PORT="${1#*=}" ;;
+        --ingress-port=*)       INGRESS_PORT="${1#*=}" ;;
+        --k8s-api-port=*)       K8S_API_PORT="${1#*=}" ;;
+        --kubeconfig-path=*)    KUBECONFIG_PATH="${1#*=}" ;;
+        --forgejo-password=*)   FORGEJO_PASSWORD="${1#*=}" ;;
+        --flagsmith-password=*) FLAGSMITH_PASSWORD="${1#*=}" ;;
+        --help|-h)              usage; exit 0 ;;
+        *)                      echo "ERROR: unknown flag '$1'" >&2; echo "" >&2; usage >&2; exit 1 ;;
     esac
     shift
 done
@@ -82,6 +92,14 @@ FORGEJO_ADMIN_EMAIL="bootstrap@forgejo.local"
 # the host.
 FORGEJO_PF_PORT="13000"
 MONITORING_NS="monitoring"
+FLAGSMITH_NS="flagsmith"
+FLAGSMITH_ORG="example-stack"
+FLAGSMITH_PROJECT="example-stack"
+# Synthetic address for the demo-only bootstrap account. Nothing sends mail.
+FLAGSMITH_ADMIN_EMAIL="bootstrap@flagsmith.local"
+# Local port for the bootstrap port-forward: a port unlikely to be in use on
+# the host.
+FLAGSMITH_PF_PORT="18000"
 # kube-prometheus-stack, PostgreSQL, and two node containers do not fit in
 # less than this.
 MIN_MACHINE_MEMORY_MIB="4096"
@@ -109,12 +127,17 @@ echo "    kubeconfig:        ${KUBECONFIG_PATH}"
 # --- Cleanup tracking ---
 
 FORGEJO_PF_PID=""
+FLAGSMITH_PF_PID=""
 WORK_DIR=""
 
 cleanup() {
     if [ -n "${FORGEJO_PF_PID}" ]; then
         kill "${FORGEJO_PF_PID}" 2>/dev/null || true
         wait "${FORGEJO_PF_PID}" 2>/dev/null || true
+    fi
+    if [ -n "${FLAGSMITH_PF_PID}" ]; then
+        kill "${FLAGSMITH_PF_PID}" 2>/dev/null || true
+        wait "${FLAGSMITH_PF_PID}" 2>/dev/null || true
     fi
     if [ -n "${WORK_DIR}" ] && [ -d "${WORK_DIR}" ]; then
         rm -rf "${WORK_DIR}"
@@ -126,6 +149,91 @@ trap cleanup EXIT
 
 forgejo_exec() {
     kubectl -n "${FORGEJO_NS}" exec deploy/forgejo -- "$@"
+}
+
+# One Python program answers every question the Flagsmith seed asks of a
+# Flagsmith API response. The response arrives as a string, so it is piped
+# back in, the way prom_fact does it in validate-stack.sh. A regular
+# expression over JSON would break the first time a field moved.
+#
+#   field KEY        one key of an object
+#   find NAME KEY    one key of the first list entry whose name is NAME
+#   names            the name of every list entry, one per line
+#
+# A list answer is either a bare array or a paginated object with "results".
+# Nothing found is a non-zero exit, so callers fall back with || echo "".
+flagsmith_fact() {
+    local response="$1"
+    shift
+    printf '%s' "${response}" | python3 -c '
+import json
+import sys
+
+mode = sys.argv[1]
+try:
+    doc = json.load(sys.stdin)
+except ValueError:
+    sys.exit(1)
+
+if mode == "field":
+    value = doc.get(sys.argv[2]) if isinstance(doc, dict) else None
+    if value is None:
+        sys.exit(1)
+    print(value)
+    sys.exit(0)
+
+items = doc.get("results", []) if isinstance(doc, dict) else doc
+if mode == "names":
+    for item in items:
+        print(item["name"])
+    sys.exit(0)
+
+for item in items:
+    if item["name"] == sys.argv[2]:
+        print(item[sys.argv[3]])
+        sys.exit(0)
+sys.exit(1)
+' "$@" 2>/dev/null
+}
+
+# Writes one bootstrap Secret into the services' namespace. These values are
+# minted while the stack comes up, so they cannot live in the manifests Flux
+# reconciles; Flux prunes only what it applied, so a Secret written here
+# survives every reconcile. The label says which script owns it.
+write_bootstrap_secret() {
+    local name="$1"
+    local app="$2"
+    shift 2
+    local literal
+    local args
+    args=()
+    for literal in "$@"; do
+        args+=(--from-literal="${literal}")
+    done
+    kubectl -n "${NAMESPACE}" create secret generic "${name}" \
+        "${args[@]}" --dry-run=client -o yaml \
+        | kubectl -n "${NAMESPACE}" apply -f - > /dev/null
+    kubectl -n "${NAMESPACE}" label secret "${name}" --overwrite \
+        "app=${app}" "app.kubernetes.io/managed-by=setup.sh" > /dev/null
+}
+
+# A call to the Flagsmith API with the bootstrap token attached. The token and
+# the base URL are set in phase C9, before the first call.
+flagsmith_api() {
+    local method="$1"
+    local path="$2"
+    local body="${3:-}"
+    if [ -n "${body}" ]; then
+        curl -s -X "${method}" \
+            -H "Authorization: Token ${FLAGSMITH_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "${body}" \
+            "${FLAGSMITH_API}${path}" || echo ""
+    else
+        curl -s -X "${method}" \
+            -H "Authorization: Token ${FLAGSMITH_TOKEN}" \
+            "${FLAGSMITH_API}${path}" || echo ""
+    fi
 }
 
 # A node container that has been stopped and started comes back on a different
@@ -284,11 +392,14 @@ YAML
 
     # --kubeconfig-update-default=false: the default kubeconfig is left alone,
     # so this cluster never becomes the shell's current context.
+    # Both host ports are bound to loopback. Without an address, the podman
+    # machine's forwarder binds every interface of the host, which put the
+    # whole stack on whatever network the machine was on.
     k3d cluster create "${CLUSTER_NAME}" \
         --image "${K3S_IMAGE}" \
         --agents 1 \
-        --api-port "${K8S_API_PORT}" \
-        --port "${INGRESS_PORT}:80@loadbalancer" \
+        --api-port "127.0.0.1:${K8S_API_PORT}" \
+        --port "127.0.0.1:${INGRESS_PORT}:80@loadbalancer" \
         --registry-config "${REGISTRIES_YAML}" \
         --kubeconfig-update-default=false \
         --kubeconfig-switch-context=false \
@@ -453,13 +564,16 @@ mkdir -p "${WORK_DIR}/k8s/apps" "${WORK_DIR}/k8s/infra"
 cp -R "${REPO_ROOT}/k8s/apps/base" "${WORK_DIR}/k8s/apps/base"
 cp -R "${REPO_ROOT}/k8s/infra/monitoring" "${WORK_DIR}/k8s/infra/monitoring"
 cp -R "${REPO_ROOT}/k8s/infra/monitoring-flux" "${WORK_DIR}/k8s/infra/monitoring-flux"
+cp -R "${REPO_ROOT}/k8s/infra/flagsmith" "${WORK_DIR}/k8s/infra/flagsmith"
 
 # The landing page and the UI print browser URLs, which carry the host ingress
-# port. The manifests hold the default; the seeded copies get whatever
+# port, and Flagsmith builds the links in its own pages from FLAGSMITH_DOMAIN.
+# The manifests hold the default; the seeded copies get whatever
 # --ingress-port was given, so those links stay clickable.
 if [ "${INGRESS_PORT}" != "8090" ]; then
-    echo "    Rewriting landing page and UI links for ingress port ${INGRESS_PORT}"
+    echo "    Rewriting landing page, UI, and Flagsmith links for ingress port ${INGRESS_PORT}"
     for f in "${WORK_DIR}/k8s/apps/base/landing.yaml" \
+             "${WORK_DIR}/k8s/infra/flagsmith/deployment.yaml" \
              "${WORK_DIR}/k8s/apps/base/ui/index.html"; do
         sed -e "s/localhost:8090/localhost:${INGRESS_PORT}/g" \
             -e "s/host port 8090/host port ${INGRESS_PORT}/g" \
@@ -568,6 +682,12 @@ kubectl -n flux-system wait --for=condition=Ready --timeout=20m kustomization/mo
 echo "==> Waiting for the apps Kustomization to reconcile"
 kubectl -n flux-system wait --for=condition=Ready --timeout=5m kustomization/apps
 
+# The namespace exists now, which is why this is not back in C2 where the
+# token was minted. The scenario scripts reuse this token instead of minting
+# one of their own on every run.
+echo "==> Storing the Forgejo access token for the scenario scripts"
+write_bootstrap_secret "forgejo-bootstrap" "forgejo" "token=${FORGEJO_TOKEN}"
+
 # --- C8: Roll the services so they pick up freshly built images ---
 #
 # Builds run before the cluster exists, so the first reconciliation already
@@ -577,6 +697,158 @@ kubectl -n flux-system wait --for=condition=Ready --timeout=5m kustomization/app
 echo "==> Rolling restart of the services to pick up rebuilt images"
 kubectl -n "${NAMESPACE}" rollout restart deployment/go-api deployment/go-grpc deployment/rust-inventory 2>/dev/null || true
 kubectl -n "${NAMESPACE}" rollout status deployment --timeout=120s || true
+
+# --- C9: Seed Flagsmith ---
+#
+# Flagsmith has no way to create its first user with a known password from the
+# environment: the image's bootstrap command creates one with an unusable
+# password and prints a reset link. The account is created through the signup
+# endpoint instead, which takes a password, answers with the API token the
+# rest of the seed uses, and accepts superuser on a self-hosted instance that
+# has no users yet. No feature flags are created; nothing reads one yet.
+
+mark "flagsmith reconcile wait begin (the second long pull: the Flagsmith image)"
+echo "==> Waiting for the flagsmith Kustomization to reconcile"
+kubectl -n flux-system wait --for=condition=Ready --timeout=10m kustomization/flagsmith
+
+echo "==> Port-forwarding Flagsmith for bootstrap"
+kubectl -n "${FLAGSMITH_NS}" port-forward "svc/flagsmith" "${FLAGSMITH_PF_PORT}:8000" &>/dev/null &
+FLAGSMITH_PF_PID=$!
+FLAGSMITH_LIVENESS="http://localhost:${FLAGSMITH_PF_PORT}/health/liveness/"
+for _ in $(seq 1 40); do
+    if curl -s -o /dev/null --max-time 1 "${FLAGSMITH_LIVENESS}" 2>/dev/null; then
+        break
+    fi
+    sleep 0.5
+done
+if ! curl -s -o /dev/null --max-time 1 "${FLAGSMITH_LIVENESS}" 2>/dev/null; then
+    echo "ERROR: the Flagsmith port-forward on localhost:${FLAGSMITH_PF_PORT} did not answer within 20s" >&2
+    exit 1
+fi
+
+FLAGSMITH_API="http://localhost:${FLAGSMITH_PF_PORT}/api/v1"
+
+echo "==> Bootstrapping the Flagsmith admin user"
+FLAGSMITH_SIGNUP=$(curl -s -X POST \
+    -H "Content-Type: application/json" \
+    -d "{\"email\":\"${FLAGSMITH_ADMIN_EMAIL}\",\"password\":\"${FLAGSMITH_PASSWORD}\",\"first_name\":\"Bootstrap\",\"last_name\":\"User\",\"sign_up_type\":\"NO_INVITE\",\"superuser\":true}" \
+    "${FLAGSMITH_API}/auth/users/" || echo "")
+FLAGSMITH_TOKEN=$(flagsmith_fact "${FLAGSMITH_SIGNUP}" field key || echo "")
+
+if [ -n "${FLAGSMITH_TOKEN}" ]; then
+    echo "    Admin user '${FLAGSMITH_ADMIN_EMAIL}' created"
+else
+    # A re-run against a live cluster finds the account already there, and
+    # signup answers 400 rather than a token.
+    echo "    Admin user '${FLAGSMITH_ADMIN_EMAIL}' already exists, logging in"
+    FLAGSMITH_LOGIN=$(curl -s -X POST \
+        -H "Content-Type: application/json" \
+        -d "{\"email\":\"${FLAGSMITH_ADMIN_EMAIL}\",\"password\":\"${FLAGSMITH_PASSWORD}\"}" \
+        "${FLAGSMITH_API}/auth/login/" || echo "")
+    FLAGSMITH_TOKEN=$(flagsmith_fact "${FLAGSMITH_LOGIN}" field key || echo "")
+fi
+
+if [ -z "${FLAGSMITH_TOKEN}" ]; then
+    echo "ERROR: could not obtain a Flagsmith API token for ${FLAGSMITH_ADMIN_EMAIL}" >&2
+    echo "       Signup answered: ${FLAGSMITH_SIGNUP}" >&2
+    if [ -n "${FLAGSMITH_LOGIN:-}" ]; then
+        echo "       Login answered: ${FLAGSMITH_LOGIN}" >&2
+    fi
+    exit 1
+fi
+
+echo "==> Ensuring the Flagsmith organization and project exist"
+FLAGSMITH_ORG_ID=$(flagsmith_fact "$(flagsmith_api GET /organisations/)" find "${FLAGSMITH_ORG}" id || echo "")
+if [ -n "${FLAGSMITH_ORG_ID}" ]; then
+    echo "    Organization '${FLAGSMITH_ORG}' already exists"
+else
+    # The JSON bodies are built into a variable first. bash 3.2 loses the
+    # quoting of an escaped-quote body nested inside "$(...)", and brace-
+    # expands the {"a":1,"b":2} into two words, so every body with a comma
+    # was sent as two broken requests.
+    body='{"name":"'"${FLAGSMITH_ORG}"'"}'
+    response=$(flagsmith_api POST /organisations/ "${body}")
+    FLAGSMITH_ORG_ID=$(flagsmith_fact "${response}" field id || echo "")
+    if [ -z "${FLAGSMITH_ORG_ID}" ]; then
+        echo "ERROR: could not create the Flagsmith organization '${FLAGSMITH_ORG}'" >&2
+        echo "       Flagsmith answered: ${response}" >&2
+        exit 1
+    fi
+    echo "    Organization '${FLAGSMITH_ORG}' created"
+fi
+
+FLAGSMITH_PROJECT_ID=$(flagsmith_fact "$(flagsmith_api GET /projects/)" find "${FLAGSMITH_PROJECT}" id || echo "")
+if [ -n "${FLAGSMITH_PROJECT_ID}" ]; then
+    echo "    Project '${FLAGSMITH_PROJECT}' already exists"
+else
+    body='{"name":"'"${FLAGSMITH_PROJECT}"'","organisation":'"${FLAGSMITH_ORG_ID}"'}'
+    response=$(flagsmith_api POST /projects/ "${body}")
+    FLAGSMITH_PROJECT_ID=$(flagsmith_fact "${response}" field id || echo "")
+    if [ -z "${FLAGSMITH_PROJECT_ID}" ]; then
+        echo "ERROR: could not create the Flagsmith project '${FLAGSMITH_PROJECT}'" >&2
+        echo "       Flagsmith answered: ${response}" >&2
+        exit 1
+    fi
+    echo "    Project '${FLAGSMITH_PROJECT}' created"
+fi
+
+# The two environment names the services will read later. Anything else the
+# project carries is removed, so a Flagsmith release that starts creating a
+# default environment on project create does not leave one behind.
+echo "==> Ensuring the Flagsmith environments exist"
+FLAGSMITH_ENVS=$(flagsmith_api GET "/environments/?project=${FLAGSMITH_PROJECT_ID}")
+
+while IFS= read -r env_name; do
+    [ -n "${env_name}" ] || continue
+    case "${env_name}" in
+        staging|production) continue ;;
+    esac
+    env_key=$(flagsmith_fact "${FLAGSMITH_ENVS}" find "${env_name}" api_key || echo "")
+    if [ -n "${env_key}" ]; then
+        echo "    Removing the default environment '${env_name}'"
+        flagsmith_api DELETE "/environments/${env_key}/" > /dev/null
+    fi
+done <<EOF
+$(flagsmith_fact "${FLAGSMITH_ENVS}" names || true)
+EOF
+
+FLAGSMITH_STAGING_KEY=""
+FLAGSMITH_PRODUCTION_KEY=""
+for env_name in staging production; do
+    env_key=$(flagsmith_fact "${FLAGSMITH_ENVS}" find "${env_name}" api_key || echo "")
+    if [ -n "${env_key}" ]; then
+        echo "    Environment '${env_name}' already exists"
+    else
+        body='{"name":"'"${env_name}"'","project":'"${FLAGSMITH_PROJECT_ID}"'}'
+        response=$(flagsmith_api POST /environments/ "${body}")
+        env_key=$(flagsmith_fact "${response}" field api_key || echo "")
+        if [ -z "${env_key}" ]; then
+            echo "ERROR: could not create the Flagsmith environment '${env_name}'" >&2
+            echo "       Flagsmith answered: ${response}" >&2
+            exit 1
+        fi
+        echo "    Environment '${env_name}' created"
+    fi
+    case "${env_name}" in
+        staging)    FLAGSMITH_STAGING_KEY="${env_key}" ;;
+        production) FLAGSMITH_PRODUCTION_KEY="${env_key}" ;;
+    esac
+done
+
+# The admin token joins the two environment keys so a later run, a scenario,
+# or a person has an authenticated way into Flagsmith without signing in
+# again. validate-stack.sh reads the two environment keys back out to check
+# the seeded project; nothing else reads any of it yet, and the SDKs will
+# read the environment keys.
+echo "==> Writing the Flagsmith bootstrap Secret into the ${NAMESPACE} namespace"
+write_bootstrap_secret "flagsmith-bootstrap" "flagsmith" \
+    "admin-token=${FLAGSMITH_TOKEN}" \
+    "production=${FLAGSMITH_PRODUCTION_KEY}" \
+    "staging=${FLAGSMITH_STAGING_KEY}"
+
+kill "${FLAGSMITH_PF_PID}" 2>/dev/null || true
+wait "${FLAGSMITH_PF_PID}" 2>/dev/null || true
+FLAGSMITH_PF_PID=""
 
 # =============================================================================
 # Phase D: Smoke
@@ -588,7 +860,7 @@ mark "Phase D begin"
 
 echo ""
 echo "==> Namespaces:"
-kubectl get ns | grep -E "${NAMESPACE}|${FORGEJO_NS}|flux-system|${MONITORING_NS}" || true
+kubectl get ns | grep -E "${NAMESPACE}|${FORGEJO_NS}|flux-system|${MONITORING_NS}|${FLAGSMITH_NS}" || true
 
 echo ""
 echo "==> Pods in ${NAMESPACE}:"
@@ -626,6 +898,7 @@ echo "    - go-api:         http://goapi.localhost:${INGRESS_PORT}/"
 echo "    - rust-inventory: http://rust.localhost:${INGRESS_PORT}/"
 echo "    - Forgejo:        http://forgejo.localhost:${INGRESS_PORT}/ (${FORGEJO_ADMIN_USER} / ${FORGEJO_PASSWORD}, demo-only)"
 echo "    - Grafana:        http://grafana.localhost:${INGRESS_PORT}/ (admin / admin, demo-only)"
+echo "    - Flagsmith:      http://flagsmith.localhost:${INGRESS_PORT}/ (${FLAGSMITH_ADMIN_EMAIL} / ${FLAGSMITH_PASSWORD}, demo-only)"
 echo "    - Prometheus:     http://prometheus.localhost:${INGRESS_PORT}/"
 echo ""
 echo "    kubectl reaches this cluster with KUBECONFIG=${KUBECONFIG_PATH}."

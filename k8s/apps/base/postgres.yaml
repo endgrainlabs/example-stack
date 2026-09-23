@@ -9,6 +9,7 @@ data:
     set -e
     psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
       SELECT 'CREATE DATABASE orders' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'orders')\gexec
+      SELECT 'CREATE DATABASE flagsmith' WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'flagsmith')\gexec
     EOSQL
 ---
 apiVersion: v1

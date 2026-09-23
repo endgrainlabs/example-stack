@@ -2,14 +2,17 @@
 set -euo pipefail
 
 # Checks that the stack's infrastructure is wired correctly: pods running,
-# ingress resolving, metrics endpoints responding, Prometheus scraping every
-# expected target, Flux reconciling. Complements smoke-test.sh, which checks
-# service behavior.
+# ingress resolving, the three host ports answering on 127.0.0.1 and nowhere
+# else, metrics endpoints responding, Prometheus scraping every expected
+# target, both seeded Flagsmith environments answering for their keys, Flux
+# reconciling. Complements smoke-test.sh, which checks service behavior.
 #
 # Invoke with: bash scripts/validate-stack.sh
 
 KUBECONFIG_PATH="${HOME}/.kube/example-stack.yaml"
 INGRESS_PORT="8090"
+K8S_API_PORT="6551"
+REGISTRY_PORT="5111"
 
 usage() {
     cat <<EOF
@@ -17,6 +20,8 @@ Usage: $(basename "$0") [config-flags...]
 
 Config flags (all optional, defaults shown):
   --ingress-port=PORT       8090
+  --k8s-api-port=PORT       6551
+  --registry-port=PORT      5111
   --kubeconfig-path=PATH    \$HOME/.kube/example-stack.yaml
   --help                    Show this message
 EOF
@@ -25,6 +30,8 @@ EOF
 while [ $# -gt 0 ]; do
     case "$1" in
         --ingress-port=*)    INGRESS_PORT="${1#*=}" ;;
+        --k8s-api-port=*)    K8S_API_PORT="${1#*=}" ;;
+        --registry-port=*)   REGISTRY_PORT="${1#*=}" ;;
         --kubeconfig-path=*) KUBECONFIG_PATH="${1#*=}" ;;
         --help|-h)           usage; exit 0 ;;
         *)                   echo "ERROR: unknown flag '$1'" >&2; echo "" >&2; usage >&2; exit 1 ;;
@@ -41,6 +48,7 @@ NAMESPACE="example-stack"
 MONITORING_NS="monitoring"
 FLUX_NS="flux-system"
 FORGEJO_NS="forgejo"
+FLAGSMITH_NS="flagsmith"
 FAILED=0
 
 pass() { echo "  PASS  $1"; }
@@ -74,7 +82,10 @@ check_url() {
     local url="$2"
     local expect="${3:-200}"
     local status
-    status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "${url}" 2>/dev/null || echo "000")
+    # curl prints 000 itself when no connection is made, so no fallback:
+    # one would print a second 000 after it.
+    status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 "${url}" 2>/dev/null || true)
+    status="${status:-000}"
     if [ "${status}" = "${expect}" ]; then
         pass "${description} (${status})"
     else
@@ -119,6 +130,33 @@ check_body() {
     fail "${description} (no '${needle}' in ${url} within ${timeout}s: status ${status:-none}, ${#body} bytes, body kept at ${saved})"
 }
 
+# Asks Flagsmith for one environment's flag list with that environment's
+# client-side key, read back out of the flagsmith-bootstrap Secret the
+# bring-up wrote. A key that no longer names a live environment is answered
+# with a 401, so this checks the seeded project still has the environment as
+# well as that the key is good.
+check_flagsmith_environment() {
+    local env_name="$1"
+    local key status
+    key=$(kubectl -n "${NAMESPACE}" get secret flagsmith-bootstrap \
+        -o "jsonpath={.data.${env_name}}" 2>/dev/null | base64 --decode 2>/dev/null || echo "")
+    if [ -z "${key}" ]; then
+        fail "flagsmith ${env_name} environment (no '${env_name}' key in the flagsmith-bootstrap Secret)"
+        return
+    fi
+    # curl prints 000 itself when no connection is made, so no fallback:
+    # one would print a second 000 after it.
+    status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 \
+        -H "X-Environment-Key: ${key}" \
+        "http://flagsmith.localhost:${INGRESS_PORT}/api/v1/flags/" 2>/dev/null || true)
+    status="${status:-000}"
+    if [ "${status}" = "200" ]; then
+        pass "flagsmith ${env_name} environment (${status})"
+    else
+        fail "flagsmith ${env_name} environment (got ${status}, expected 200)"
+    fi
+}
+
 # --- Pods ---
 
 echo "==> Pod health"
@@ -155,10 +193,12 @@ check_job() {
 
 check_job "${NAMESPACE}" "migrate-inventory-v1"
 check_job "${NAMESPACE}" "migrate-orders-v1"
+check_job "${FLAGSMITH_NS}" "migrate-flagsmith-v1"
 
 echo ""
 echo "==> Pod health (continued)"
 check_pods "${FORGEJO_NS}" "app=forgejo" "forgejo"
+check_pods "${FLAGSMITH_NS}" "app=flagsmith" "flagsmith"
 check_pods "${MONITORING_NS}" "app.kubernetes.io/name=grafana" "grafana"
 check_pods "${MONITORING_NS}" "app.kubernetes.io/name=prometheus" "prometheus"
 check_pods "${FLUX_NS}" "app=source-controller" "flux source-controller"
@@ -182,6 +222,64 @@ check_body "forgejo clone URL names the ingress host" \
     "forgejo.localhost:${INGRESS_PORT}/endgrainlabs/example-stack.git"
 check_url "grafana" "http://grafana.localhost:${INGRESS_PORT}/" "302"
 check_url "prometheus" "http://prometheus.localhost:${INGRESS_PORT}/" "302"
+check_url "flagsmith /health/liveness/" "http://flagsmith.localhost:${INGRESS_PORT}/health/liveness/"
+
+# --- Host port boundary ---
+#
+# The stack's three host ports must be bound to loopback. Published without
+# an address, the podman machine's forwarder puts them on every interface,
+# and the whole stack, demo credentials and all, is on the local network.
+# The .localhost names resolve locally and prove nothing about that.
+#
+# This is a self-check and touches no other host. The address probed is the
+# machine's own: python asks the routing table which local address would be
+# used toward 192.0.2.1, an address RFC 5737 reserves for documentation that
+# is never routed, and a UDP connect sends nothing. Each port must then
+# refuse a connection on that address while answering on 127.0.0.1. It
+# proves the ports are not exposed on the interface the stack shares with
+# the network; it does not try to prove more than that. The address is
+# printed only on failure, so a pasted validate run does not carry it.
+
+echo ""
+echo "==> Host port boundary"
+HOST_ADDR=$(python3 -c '
+import socket
+s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+s.connect(("192.0.2.1", 1))
+print(s.getsockname()[0])
+' 2>/dev/null || echo "")
+
+check_loopback_only() {
+    local port="$1"
+    local description="$2"
+    local lan_status loop_status
+    if [ -z "${HOST_ADDR}" ] || [ "${HOST_ADDR}" = "127.0.0.1" ]; then
+        echo "  SKIP  ${description} loopback-only on ${port} (no network address to probe)"
+        return
+    fi
+    lan_status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 "http://${HOST_ADDR}:${port}/" 2>/dev/null || true)
+    loop_status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 2 "http://127.0.0.1:${port}/" 2>/dev/null || true)
+    lan_status="${lan_status:-000}"
+    loop_status="${loop_status:-000}"
+    if [ "${lan_status}" = "000" ] && [ "${loop_status}" != "000" ]; then
+        pass "${description} loopback-only on ${port}"
+    elif [ "${lan_status}" != "000" ]; then
+        fail "${description} on ${port} answered on ${HOST_ADDR} (status ${lan_status}); host ports must be bound to 127.0.0.1"
+    else
+        fail "${description} on ${port} did not answer on 127.0.0.1 either (status ${loop_status})"
+    fi
+}
+
+check_loopback_only "${INGRESS_PORT}" "ingress"
+check_loopback_only "${K8S_API_PORT}" "kubernetes api"
+check_loopback_only "${REGISTRY_PORT}" "registry"
+
+# --- Flagsmith seed ---
+
+echo ""
+echo "==> Flagsmith environments"
+check_flagsmith_environment "staging"
+check_flagsmith_environment "production"
 
 # --- Metrics endpoints (via port-forward) ---
 
@@ -231,12 +329,12 @@ echo "==> Prometheus targets"
 # which lands a minute or two after the apps Kustomization reconciles, and a
 # target it has just discovered reports "unknown" health until its first
 # scrape. Run straight after a bring-up the service targets are not there or
-# not yet scraped, so the list is polled until all three are up.
+# not yet scraped, so the list is polled until all four are up.
 PROM_TARGETS='{"data":{"activeTargets":[]}}'
 for _ in $(seq 1 30); do
     PROM_TARGETS=$(curl -s --max-time 5 "http://prometheus.localhost:${INGRESS_PORT}/api/v1/targets?state=active" || echo '{"data":{"activeTargets":[]}}')
     NOT_UP=0
-    for job in go-api go-grpc rust-inventory; do
+    for job in go-api go-grpc rust-inventory flagsmith; do
         [ "$(prom_fact "${PROM_TARGETS}" target-health "${job}")" = "up" ] || NOT_UP=1
     done
     if [ "${NOT_UP}" -eq 0 ]; then
@@ -262,6 +360,7 @@ check_prom_target() {
 check_prom_target "go-api scrape" "go-api"
 check_prom_target "go-grpc scrape" "go-grpc"
 check_prom_target "rust-inventory scrape" "rust-inventory"
+check_prom_target "flagsmith scrape" "flagsmith"
 check_prom_target "kps-prometheus self-scrape" "kps-prometheus"
 check_prom_target "kps-alertmanager" "kps-alertmanager"
 check_prom_target "grafana" "kube-prometheus-stack-grafana"
@@ -421,7 +520,7 @@ fi
 echo ""
 echo "==> Flux reconciliation"
 
-for ks in apps monitoring; do
+for ks in apps monitoring monitoring-flux flagsmith; do
     READY=$(kubectl -n "${FLUX_NS}" get kustomization "${ks}" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "Unknown")
     if [ "${READY}" = "True" ]; then
         pass "kustomization/${ks} ready"

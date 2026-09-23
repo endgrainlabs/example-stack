@@ -1,0 +1,45 @@
+# Named migrate-<what>-v1 like the migration Jobs in k8s/apps/base: when the
+# image's migration set changes, bump the suffix, and Flux creates a new Job
+# rather than trying to patch the completed one. Flagsmith's migrations
+# are idempotent, so a re-run against an already migrated database is a no-op.
+#
+# The image's own bootstrap command would create the first superuser here,
+# but only with an unusable password and a reset link. scripts/setup.sh
+# creates the account through the signup endpoint instead, which takes a
+# password and makes that first account a superuser.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate-flagsmith-v1
+  namespace: flagsmith
+spec:
+  backoffLimit: 3
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app: migrate-flagsmith
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: docker.flagsmith.com/flagsmith/flagsmith:2.273.0@sha256:6e9e8bac587865f272a0f81ad19b2c999b5b21a9514f878a7ecfabc1ab0ed7b1
+          args: ["migrate"]
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: flagsmith
+                  key: database-url
+            - name: DJANGO_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: flagsmith
+                  key: django-secret-key
+            - name: ENVIRONMENT
+              value: "production"
+            # Flagsmith's telemetry heartbeat is wired to post_migrate and
+            # defaults to on, so this Job is what would post the stack's
+            # object counts to api.flagsmith.com.
+            - name: ENABLE_TELEMETRY
+              value: "false"

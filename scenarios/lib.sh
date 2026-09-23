@@ -98,12 +98,36 @@ scenario_cleanup() {
 }
 trap scenario_cleanup EXIT
 
-# Generates a Forgejo access token through the command line inside the pod and
-# opens a port-forward to Forgejo, so the clone below can reach it from the
-# host. The token name carries the scenario and a timestamp: Forgejo rejects a
-# duplicate name, and a demo.sh may be run more than once.
-scenario_open_forgejo() {
-    local token_output
+# Puts a working Forgejo access token in FORGEJO_TOKEN. The bring-up stores
+# the token it minted in the forgejo-bootstrap Secret, and that one is reused
+# while Forgejo still accepts it, so a stack that has run many scenarios does
+# not accumulate a token per run. A missing Secret, or a token Forgejo no
+# longer accepts, falls back to minting one through the command line inside
+# the pod. The minted name carries the scenario and a timestamp: Forgejo
+# rejects a duplicate name, and a demo.sh may be run more than once.
+#
+# Needs the port-forward open: the reused token is checked against the API
+# before anything is cloned with it.
+scenario_forgejo_token() {
+    local token_output status
+
+    FORGEJO_TOKEN=$(kubectl -n "${NAMESPACE}" get secret forgejo-bootstrap \
+        -o jsonpath='{.data.token}' 2>/dev/null | base64 --decode 2>/dev/null || echo "")
+
+    if [ -n "${FORGEJO_TOKEN}" ]; then
+        # curl prints 000 itself when no connection is made, so no fallback:
+        # one would print a second 000 after it.
+        status=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 \
+            -H "Authorization: token ${FORGEJO_TOKEN}" \
+            "http://localhost:${FORGEJO_PF_PORT}/api/v1/user" 2>/dev/null || true)
+        status="${status:-000}"
+        if [ "${status}" = "200" ]; then
+            echo "==> Reusing the Forgejo access token from the forgejo-bootstrap Secret"
+            return 0
+        fi
+        echo "==> The stored Forgejo access token did not authenticate (${status}), generating one"
+        FORGEJO_TOKEN=""
+    fi
 
     echo "==> Generating Forgejo access token"
     token_output=$(kubectl -n "${FORGEJO_NS}" exec deploy/forgejo -- \
@@ -117,7 +141,11 @@ scenario_open_forgejo() {
         echo "${token_output}" >&2
         exit 1
     fi
+}
 
+# Opens a port-forward to Forgejo and clones the in-cluster repository through
+# it, so the overlay below can be pushed from the host.
+scenario_open_forgejo() {
     echo "==> Port-forwarding Forgejo"
     kubectl -n "${FORGEJO_NS}" port-forward "svc/forgejo" "${FORGEJO_PF_PORT}:3000" &>/dev/null &
     FORGEJO_PF_PID=$!
@@ -129,6 +157,8 @@ scenario_open_forgejo() {
         fi
         sleep 0.5
     done
+
+    scenario_forgejo_token
 
     WORK_DIR=$(mktemp -d)
     cd "${WORK_DIR}" || exit 1

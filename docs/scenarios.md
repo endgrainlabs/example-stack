@@ -18,8 +18,13 @@ A webhook triggers a Flux reconciliation immediately.
 
 `scenarios/lib.sh` has shared code between the scenarios' `demo.sh` scripts.
 They share flags, the Forgejo token and port-forward, the clone, the overlay
-push, the Flux path switch, and a wait helper. Each `demo.sh` contains only
-what is specific to its own failure. `demo.sh` replaces its overlay directory
+push, the Flux path switch, and a wait helper. The token is read from the
+`forgejo-bootstrap` Secret the bring-up wrote and reused while Forgejo still
+accepts it, which is the "Reusing the Forgejo access token" line the scripts
+print; one is minted through the Forgejo command line when that Secret is
+missing or the token check does not answer 200, whether because Forgejo
+rejected the token or because the port-forward had not answered yet. Each
+`demo.sh` contains only what is specific to its own failure. `demo.sh` replaces its overlay directory
 in the clone, so a file dropped from a scenario does not survive in Forgejo
 and re-running the script with nothing to change pushes nothing. A wait that
 times out exits non-zero.

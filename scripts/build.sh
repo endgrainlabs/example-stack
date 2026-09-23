@@ -66,9 +66,11 @@ if podman container exists "${REGISTRY_NAME}" 2>/dev/null; then
     fi
 else
     echo "==> Creating local registry: ${REGISTRY_NAME}"
+    # Bound to loopback: only build.sh pushes through the host port. The
+    # cluster's nodes reach the registry over the podman network by name.
     podman run -d \
         --name "${REGISTRY_NAME}" \
-        -p "${REGISTRY_PORT}:5000" \
+        -p "127.0.0.1:${REGISTRY_PORT}:5000" \
         --restart always \
         "${REGISTRY_IMAGE}"
 fi

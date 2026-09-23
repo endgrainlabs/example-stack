@@ -1,0 +1,15 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: flagsmith
+  namespace: flagsmith
+  labels:
+    app: flagsmith
+spec:
+  selector:
+    matchLabels:
+      app: flagsmith
+  endpoints:
+    - port: prom
+      path: /metrics/
+      interval: 15s
