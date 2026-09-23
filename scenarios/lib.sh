@@ -1,6 +1,7 @@
 # shellcheck shell=bash
 # Shared machinery for the scenario scripts: flags, Forgejo access, the clone
-# of the in-cluster repository, the Flux path switch, and the wait helper.
+# of the in-cluster repository, the Flux path switch, Flagsmith access and
+# the flag switch, and the wait helper.
 #
 # Sourced by each demo.sh, never run on its own. A demo.sh sources this file,
 # calls scenario_describe, and then scenario_parse_args "$@". A demo.sh that
@@ -27,6 +28,13 @@ FORGEJO_ORG="endgrainlabs"
 FORGEJO_REPO="example-stack"
 FORGEJO_ADMIN_USER="bootstrap"
 FLUX_NS="flux-system"
+# The Flagsmith project setup.sh seeds, which holds the flags the services
+# read. Its production environment is the one they read.
+FLAGSMITH_PROJECT="example-stack"
+# The three flags, one per service, all off at baseline.
+FLAG_INVENTORY="inventory.expose_region"
+FLAG_ORDERS="orders.forward_region"
+FLAG_PRICING="pricing.regional_currency"
 # Local ports for the port-forwards: ports unlikely to be in use on the host.
 FORGEJO_PF_PORT="13000"
 GRPC_PF_PORT="19092"
@@ -199,6 +207,190 @@ scenario_set_flux_path() {
     echo "==> Triggering Flux reconciliation"
     kubectl -n "${FLUX_NS}" annotate --overwrite kustomization apps \
         reconcile.fluxcd.io/requestedAt="$(date +%s)"
+}
+
+# Answers a question about a Flagsmith API response. A copy of flagsmith_fact
+# in scripts/setup.sh, which this file does not source; the modes are the
+# same:
+#
+#   field KEY        one key of an object
+#   find NAME KEY    one key of the first list entry whose name is NAME
+#   first KEY        one key of the first list entry
+#   names            the name of every list entry, one per line
+#
+# A list answer is either a bare array or a paginated object with "results".
+# A boolean prints as true or false, the way the JSON spells it. Nothing found
+# is a non-zero exit, so callers fall back with || echo "".
+scenario_flagsmith_fact() {
+    local response="$1"
+    shift
+    printf '%s' "${response}" | python3 -c '
+import json
+import sys
+
+mode = sys.argv[1]
+try:
+    doc = json.load(sys.stdin)
+except ValueError:
+    sys.exit(1)
+
+
+def emit(value):
+    if value is None:
+        sys.exit(1)
+    print(json.dumps(value) if isinstance(value, bool) else value)
+    sys.exit(0)
+
+
+if mode == "field":
+    emit(doc.get(sys.argv[2]) if isinstance(doc, dict) else None)
+
+items = doc.get("results", []) if isinstance(doc, dict) else doc
+if mode == "names":
+    for item in items:
+        print(item["name"])
+    sys.exit(0)
+
+if mode == "first":
+    emit(items[0].get(sys.argv[2]) if items else None)
+
+for item in items:
+    if item["name"] == sys.argv[2]:
+        emit(item[sys.argv[3]])
+sys.exit(1)
+' "$@" 2>/dev/null
+}
+
+# A call to the Flagsmith admin API through the ingress, with the admin token
+# attached. A body is passed in a variable built beforehand: bash 3.2
+# brace-expands JSON written inside "$(...)".
+scenario_flagsmith_api() {
+    local method="$1"
+    local path="$2"
+    local body="${3:-}"
+    local api="http://flagsmith.localhost:${INGRESS_PORT}/api/v1"
+    if [ -n "${body}" ]; then
+        curl -s --max-time 15 -X "${method}" \
+            -H "Authorization: Token ${FLAGSMITH_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "${body}" \
+            "${api}${path}" || echo ""
+    else
+        curl -s --max-time 15 -X "${method}" \
+            -H "Authorization: Token ${FLAGSMITH_TOKEN}" \
+            "${api}${path}" || echo ""
+    fi
+}
+
+# Reads the admin token and the production client key that setup.sh stored
+# in the flagsmith-bootstrap Secret, and finds the seeded project. Flagsmith
+# generates both at seed time, so the Secret is the only place they are kept.
+scenario_open_flagsmith() {
+    local projects
+
+    echo "==> Reading the Flagsmith admin token and production key"
+    FLAGSMITH_TOKEN=$(kubectl -n "${NAMESPACE}" get secret flagsmith-bootstrap \
+        -o jsonpath='{.data.admin-token}' 2>/dev/null | base64 --decode 2>/dev/null || echo "")
+    FLAGSMITH_PRODUCTION_KEY=$(kubectl -n "${NAMESPACE}" get secret flagsmith-bootstrap \
+        -o jsonpath='{.data.production}' 2>/dev/null | base64 --decode 2>/dev/null || echo "")
+    if [ -z "${FLAGSMITH_TOKEN}" ] || [ -z "${FLAGSMITH_PRODUCTION_KEY}" ]; then
+        echo "ERROR: the flagsmith-bootstrap Secret in ${NAMESPACE} has no admin-token or production key;" >&2
+        echo "       run scripts/setup.sh to seed Flagsmith" >&2
+        exit 1
+    fi
+
+    projects=$(scenario_flagsmith_api GET /projects/)
+    FLAGSMITH_PROJECT_ID=$(scenario_flagsmith_fact "${projects}" find "${FLAGSMITH_PROJECT}" id || echo "")
+    if [ -z "${FLAGSMITH_PROJECT_ID}" ]; then
+        echo "ERROR: could not find the Flagsmith project '${FLAGSMITH_PROJECT}'" >&2
+        echo "       Flagsmith answered: ${projects}" >&2
+        exit 1
+    fi
+}
+
+# Finds a feature's state in the production environment, the one the services
+# read, and sets FLAG_STATE_ID and FLAG_STATE_ENABLED (true or false). It sets
+# globals rather than printing, so a caller runs it directly and not in a
+# subshell. Needs scenario_open_flagsmith first.
+FLAG_STATE_ID=""
+FLAG_STATE_ENABLED=""
+scenario_flag_state() {
+    local name="$1"
+    local features feature_id states
+
+    features=$(scenario_flagsmith_api GET "/projects/${FLAGSMITH_PROJECT_ID}/features/")
+    feature_id=$(scenario_flagsmith_fact "${features}" find "${name}" id || echo "")
+    if [ -z "${feature_id}" ]; then
+        echo "ERROR: Flagsmith has no feature '${name}' in the project '${FLAGSMITH_PROJECT}'" >&2
+        echo "       Flagsmith answered: ${features}" >&2
+        exit 1
+    fi
+
+    # The environment's own state for the feature, not a segment's or an
+    # identity's: this endpoint lists only those.
+    states=$(scenario_flagsmith_api GET "/environments/${FLAGSMITH_PRODUCTION_KEY}/featurestates/?feature=${feature_id}")
+    FLAG_STATE_ID=$(scenario_flagsmith_fact "${states}" first id || echo "")
+    FLAG_STATE_ENABLED=$(scenario_flagsmith_fact "${states}" first enabled || echo "")
+    if [ -z "${FLAG_STATE_ID}" ]; then
+        echo "ERROR: Flagsmith has no production state for feature '${name}'" >&2
+        echo "       Flagsmith answered: ${states}" >&2
+        exit 1
+    fi
+}
+
+# Turns one feature's enabled bit on or off in the production environment.
+# Only that bit: Flagsmith keeps a feature's value, which can be a string, a
+# number, or JSON, apart from whether it is enabled, and this leaves the value
+# alone. A feature already in that state is left alone too, so a re-run
+# changes nothing.
+scenario_set_flag_enabled() {
+    local name="$1"
+    local state="$2"
+    local enabled body response
+
+    case "${state}" in
+        on)  enabled="true" ;;
+        off) enabled="false" ;;
+        *)
+            echo "ERROR: scenario_set_flag_enabled takes on or off, not '${state}'" >&2
+            exit 1 ;;
+    esac
+
+    scenario_flag_state "${name}"
+    if [ "${FLAG_STATE_ENABLED}" = "${enabled}" ]; then
+        echo "    '${name}' is already ${state} in production"
+        return 0
+    fi
+
+    body='{"enabled":'"${enabled}"'}'
+    response=$(scenario_flagsmith_api PUT "/environments/${FLAGSMITH_PRODUCTION_KEY}/featurestates/${FLAG_STATE_ID}/" "${body}")
+    if [ "$(scenario_flagsmith_fact "${response}" field enabled || echo "")" != "${enabled}" ]; then
+        echo "ERROR: could not turn feature '${name}' ${state} in production" >&2
+        echo "       Flagsmith answered: ${response}" >&2
+        exit 1
+    fi
+    echo "    '${name}' turned ${state} in production"
+}
+
+# Exits zero when all three flags are off in production, the baseline, and
+# prints nothing: the callers say what the answer means for them.
+scenario_flags_at_baseline() {
+    local name
+    for name in "${FLAG_PRICING}" "${FLAG_ORDERS}" "${FLAG_INVENTORY}"; do
+        scenario_flag_state "${name}"
+        if [ "${FLAG_STATE_ENABLED}" != "false" ]; then
+            return 1
+        fi
+    done
+    return 0
+}
+
+# Turns all three flags off, in the reverse of the order scenario 4 turns
+# them on.
+scenario_flags_restore_baseline() {
+    scenario_set_flag_enabled "${FLAG_PRICING}" off
+    scenario_set_flag_enabled "${FLAG_ORDERS}" off
+    scenario_set_flag_enabled "${FLAG_INVENTORY}" off
 }
 
 # Polls a command until it prints the expected value, for up to two minutes.

@@ -1,24 +1,32 @@
 # Failure scenarios
 
-There are three supported reproducible failures, each representing a
-different class of distributed system problem. Each is applied through
-Flux and reverted the same way, with the script undoing anything the
-scenario changed outside Git.
+There are four supported reproducible failures, each representing a
+different class of distributed system problem. The first three are applied
+through Flux and reverted the same way, with the script undoing anything
+the scenario changed outside Git. The fourth changes nothing in Git: it
+turns feature flags on through Flagsmith's API and off again the same way.
 
 The stack must be running first by executing `make up` or
 `bash scripts/setup.sh`. Running `demo.sh` for each scenario is idempotent.
 
 ## How to apply a scenario
 
-Each scenario directory has an `overlay/` directory (a kustomize overlay
-over `k8s/apps/base`) and a `demo.sh` script to drive it. `demo.sh` clones
+Each scenario directory has a `demo.sh` script to drive it. Scenarios 1
+to 3 also have an `overlay/` directory (a kustomize overlay over
+`k8s/apps/base`), and their `demo.sh` clones
 the in-cluster Forgejo repository, commits the overlay, pushes it, and
 patches the Flux `apps` Kustomization to reconcile from the overlay path.
 A webhook triggers a Flux reconciliation immediately.
 
+Scenario 4 has no overlay. Its `demo.sh` reads the Flagsmith admin token
+and the production environment key from the `flagsmith-bootstrap` Secret
+and switches flags through the Flagsmith API at
+`http://flagsmith.localhost:8090/api/v1`.
+
 `scenarios/lib.sh` has shared code between the scenarios' `demo.sh` scripts.
 They share flags, the Forgejo token and port-forward, the clone, the overlay
-push, the Flux path switch, and a wait helper. The token is read from the
+push, the Flux path switch, the Flagsmith API call and flag switch, and a
+wait helper. The Forgejo token is read from the
 `forgejo-bootstrap` Secret the bring-up wrote and reused while Forgejo still
 accepts it, which is the "Reusing the Forgejo access token" line the scripts
 print; one is minted through the Forgejo command line when that Secret is
@@ -29,8 +37,11 @@ in the clone, so a file dropped from a scenario does not survive in Forgejo
 and re-running the script with nothing to change pushes nothing. A wait that
 times out exits non-zero.
 
-Running `demo.sh` with `--reset` points the Kustomization path back at
-`./k8s/apps/base` and undoes whatever else the scenario changed outside Git.
+Running `demo.sh` with `--reset` undoes its own scenario. For scenarios 1
+to 3 it points the Kustomization path back at `./k8s/apps/base` and undoes
+whatever else the scenario changed outside Git. For scenario 4 it turns the
+three flags off. One scenario is applied and verified at a time, and a
+combination of scenarios is a scenario of its own.
 
 ## Verifying a scenario
 
@@ -182,6 +193,98 @@ Running `demo.sh` with `--verify` asserts an order for Widget returning 201,
 an order for Gadget returning 422 with a body naming the currency, and
 `go-grpc` health returning `SERVING`. After a reset it asserts that an order
 for Gadget returns 201.
+
+## Scenario 4: feature flag triple
+
+This is an emergent interaction between three feature flags, each owned by
+a different service.
+
+The scenario models three feature flags that cause a functional regression
+only when all three are enabled. Each service reads one flag from the
+`production` environment of the `example-stack` project in Flagsmith, all
+three off at baseline, as [services.md](services.md#feature-flags)
+describes. The demo enables them in this sequence, through Flagsmith's API.
+
+1. `inventory.expose_region`: `rust-inventory` adds a `region` to each
+   item, `us-east` for the `east` warehouse and `eu-west` for `west`.
+2. `orders.forward_region`: `go-api` passes the item's region to pricing.
+3. `pricing.regional_currency`: `go-grpc` prices `eu-west` in EUR.
+
+With all three on, an order for Gadget, the `west` warehouse item, is
+priced in EUR and `go-api` answers 422, the symptom scenario 3 produces
+through `REGIONAL_PRICING`, from a different cause. Widget and Sprocket are
+`east`, whose region `us-east` has no currency mapping, and still succeed in
+USD. The services refresh their flags every ten seconds, so each step shows
+within about ten seconds.
+
+Any two flags are inert.
+
+- `inventory.expose_region` and `orders.forward_region` on, without
+  `pricing.regional_currency`: the region reaches `go-grpc`, which ignores
+  it.
+- `inventory.expose_region` and `pricing.regional_currency` on, without
+  `orders.forward_region`: `go-api` never forwards the region.
+- `orders.forward_region` and `pricing.regional_currency` on, without
+  `inventory.expose_region`: there is no region to forward.
+
+These are properties of the code, and each service's gating has a unit
+test. The other orderings therefore end the same way as 1, 2, 3, and the
+demo does not walk them: it verifies the one path it walks.
+
+What a careful observer sees
+
+- All three services healthy, every readiness check passing.
+- `rust-inventory` items carrying a `region`.
+- `go-api` orders for Widget and Sprocket succeeding in USD.
+- `go-api` orders for Gadget returning 422 with `unsupported currency: EUR`.
+- `goapi_http_requests_total{status="422"}` rising, and no alert firing: the
+  `goapi:http_error_rate` recording rule matches 5xx only.
+- No commit in Forgejo and no change to any Flux Kustomization.
+- No entry in Flagsmith's audit log. The stack runs Flagsmith on its free
+  plan, whose audit log visibility is zero days, so the audit log is empty
+  on this stack.
+- In the Flagsmith dashboard at `http://flagsmith.localhost:8090/`, each
+  flag's current state in the `production` environment. That is the only
+  record of the change, with no history and no author.
+
+No single change breaks anything, and each one can be checked on its own and
+found harmless. The failure exists only in the combination, across three
+services and three owners. It arrives outside Git, so the deploy history
+shows nothing. It is a 4xx, so the error-rate rules do not see it. Finding
+it means noticing that the 422s began without a deploy, then reading the
+current state of every flag and working out what they do together.
+
+To run this scenario:
+
+```sh
+bash scenarios/scenario-4-feature-flag-triple/demo.sh --verify
+bash scenarios/scenario-4-feature-flag-triple/demo.sh --reset --verify
+```
+
+An apply starts by restoring the baseline, turning off any of the three
+flags that is on, and says whether it was already there. It then enables
+the flags in the sequence 1, 2, 3. Without `--verify` it pauses briefly
+between them and prints what to look at. With `--verify` it also asserts
+between the steps. After each of the first two flags it
+asserts that orders for Widget and Gadget return 201 in USD, that the
+Gadget item carries `"region":"eu-west"`, and that `go-api` and
+`rust-inventory` readiness return 200. After the third it asserts that an
+order for Gadget returns 422 with a body naming the currency, an order for
+Widget returns 201 in USD, and
+`goapi_http_requests_total{status="422"}` rises from a reading taken before
+the third flag went on.
+
+A second apply therefore restores the baseline and replays the same walk,
+ending in the same place.
+
+Reset restores the baseline and verifies it, nothing else. It says whether
+the flags were already at baseline, then turns all three off in reverse
+order, `pricing.regional_currency`, `orders.forward_region`,
+`inventory.expose_region`, whatever state they were in, leaving any flag
+already off alone. With `--verify` it asserts the baseline: orders for
+Widget and Gadget return 201 in USD, the Gadget item carries no `region`,
+and `go-api` and `rust-inventory` readiness return 200. A second reset
+passes.
 
 ## Alerts take time to clear
 

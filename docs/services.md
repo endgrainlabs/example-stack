@@ -323,7 +323,8 @@ request names one. With all three on, an order for Gadget, the `west`
 warehouse item, is priced in EUR and `go-api` answers 422, the symptom
 scenario 3 produces through `REGIONAL_PRICING`, from a different cause.
 Orders for Widget and Sprocket, both `east`, still succeed. With any
-flag off every order is priced in USD.
+flag off every order is priced in USD. [Scenario 4](scenarios.md#scenario-4-feature-flag-triple)
+enables the three flags in sequence and checks the stack after each change.
 
 `go-api` and `go-grpc` use Flagsmith's server-side Go SDK,
 `flagsmith-go-client`, wrapped once in `internal/flags`, in local
