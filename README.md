@@ -112,8 +112,10 @@ cluster, and the third-party telemetry defaults that do so are turned off in
 the manifests
 - Grafana usage reporting and update checks
 - Forgejo avatar fetching
-- Flagsmith's telemetry heartbeat, and the feature flags its own dashboard
-  would otherwise fetch from Flagsmith's hosted service
+- Flagsmith's telemetry heartbeat. Its dashboard's own feature flags are read
+  from the stack's Flagsmith rather than Flagsmith's hosted service, as
+  Flagsmith's docs describe; a dashboard opened during bring-up, before the
+  seed, still reads them from the hosted service
 
 Flux still re-fetches the chart index hourly, and the other components have
 not been audited. This project is not air-gapped; block egress at the podman

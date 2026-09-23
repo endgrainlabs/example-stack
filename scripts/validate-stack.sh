@@ -4,7 +4,8 @@ set -euo pipefail
 # Checks that the stack's infrastructure is wired correctly: pods running,
 # ingress resolving, the three host ports answering on 127.0.0.1 and nowhere
 # else, metrics endpoints responding, Prometheus scraping every expected
-# target, both seeded Flagsmith environments answering for their keys, Flux
+# target, both seeded Flagsmith environments answering for their keys, the
+# Flagsmith dashboard reading its own flags from this Flagsmith, Flux
 # reconciling. Complements smoke-test.sh, which checks service behavior.
 #
 # Invoke with: bash scripts/validate-stack.sh
@@ -157,6 +158,25 @@ check_flagsmith_environment() {
     fi
 }
 
+# The dashboard learns where to read its own feature flags from
+# /config/project-overrides, a script that sets window.projectOverrides from
+# the server's settings. The key there has to be the one the bring-up wrote
+# into the flagsmith-dashboard Secret: a missing one means the dashboard
+# still reads the vendor's hosted Flagsmith, and a different one means the
+# server has not been restarted since the Secret changed.
+check_flagsmith_dashboard() {
+    local key
+    key=$(kubectl -n "${FLAGSMITH_NS}" get secret flagsmith-dashboard \
+        -o 'jsonpath={.data.client-key}' 2>/dev/null | base64 --decode 2>/dev/null || echo "")
+    if [ -z "${key}" ]; then
+        fail "flagsmith dashboard flags (no 'client-key' in the flagsmith-dashboard Secret)"
+        return
+    fi
+    check_body "flagsmith dashboard reads its own flags from this Flagsmith" \
+        "http://flagsmith.localhost:${INGRESS_PORT}/config/project-overrides" \
+        "\"flagsmith\": \"${key}\""
+}
+
 # --- Pods ---
 
 echo "==> Pod health"
@@ -275,6 +295,7 @@ echo ""
 echo "==> Flagsmith environments"
 check_flagsmith_environment "staging"
 check_flagsmith_environment "production"
+check_flagsmith_dashboard
 
 # --- Metrics endpoints (via port-forward) ---
 

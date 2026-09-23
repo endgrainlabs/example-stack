@@ -5,7 +5,8 @@ set -euo pipefail
 # in-cluster Forgejo holding the manifests, Flux reconciling from it, the
 # monitoring stack, the services, a seeded Flagsmith, and a smoke test. The
 # Forgejo and Flagsmith access tokens it mints are left behind in the
-# forgejo-bootstrap and flagsmith-bootstrap Secrets.
+# forgejo-bootstrap and flagsmith-bootstrap Secrets, and the key the Flagsmith
+# dashboard reads its own feature flags with in the flagsmith-dashboard Secret.
 #
 # Phases are ordered so a failure costs as little as possible. The registry and
 # the image builds run before any cluster exists, so a broken build never
@@ -95,6 +96,10 @@ MONITORING_NS="monitoring"
 FLAGSMITH_NS="flagsmith"
 FLAGSMITH_ORG="example-stack"
 FLAGSMITH_PROJECT="example-stack"
+# The project the Flagsmith dashboard reads its own feature flags from, and
+# the one environment in it whose client-side key the dashboard is given.
+FLAGSMITH_DASHBOARD_PROJECT="flagsmith-dashboard"
+FLAGSMITH_DASHBOARD_ENV="dashboard"
 # Synthetic address for the demo-only bootstrap account. Nothing sends mail.
 FLAGSMITH_ADMIN_EMAIL="bootstrap@flagsmith.local"
 # Local port for the bootstrap port-forward: a port unlikely to be in use on
@@ -196,11 +201,17 @@ sys.exit(1)
 ' "$@" 2>/dev/null
 }
 
-# Writes one bootstrap Secret into the services' namespace. These values are
-# minted while the stack comes up, so they cannot live in the manifests Flux
-# reconciles; Flux prunes only what it applied, so a Secret written here
-# survives every reconcile. The label says which script owns it.
+# Writes one bootstrap Secret, into the services' namespace unless a leading
+# -n names another. These values are minted while the stack comes up, so they
+# cannot live in the manifests Flux reconciles; Flux prunes only what it
+# applied, so a Secret written here survives every reconcile. The label says
+# which script owns it.
 write_bootstrap_secret() {
+    local ns="${NAMESPACE}"
+    if [ "$1" = "-n" ]; then
+        ns="$2"
+        shift 2
+    fi
     local name="$1"
     local app="$2"
     shift 2
@@ -210,10 +221,10 @@ write_bootstrap_secret() {
     for literal in "$@"; do
         args+=(--from-literal="${literal}")
     done
-    kubectl -n "${NAMESPACE}" create secret generic "${name}" \
+    kubectl -n "${ns}" create secret generic "${name}" \
         "${args[@]}" --dry-run=client -o yaml \
-        | kubectl -n "${NAMESPACE}" apply -f - > /dev/null
-    kubectl -n "${NAMESPACE}" label secret "${name}" --overwrite \
+        | kubectl -n "${ns}" apply -f - > /dev/null
+    kubectl -n "${ns}" label secret "${name}" --overwrite \
         "app=${app}" "app.kubernetes.io/managed-by=setup.sh" > /dev/null
 }
 
@@ -567,8 +578,9 @@ cp -R "${REPO_ROOT}/k8s/infra/monitoring-flux" "${WORK_DIR}/k8s/infra/monitoring
 cp -R "${REPO_ROOT}/k8s/infra/flagsmith" "${WORK_DIR}/k8s/infra/flagsmith"
 
 # The landing page and the UI print browser URLs, which carry the host ingress
-# port, and Flagsmith builds the links in its own pages from FLAGSMITH_DOMAIN.
-# The manifests hold the default; the seeded copies get whatever
+# port, Flagsmith builds the links in its own pages from FLAGSMITH_DOMAIN, and
+# the Flagsmith dashboard calls FLAGSMITH_ON_FLAGSMITH_API_URL from the
+# browser. The manifests hold the default; the seeded copies get whatever
 # --ingress-port was given, so those links stay clickable.
 if [ "${INGRESS_PORT}" != "8090" ]; then
     echo "    Rewriting landing page, UI, and Flagsmith links for ingress port ${INGRESS_PORT}"
@@ -705,7 +717,8 @@ kubectl -n "${NAMESPACE}" rollout status deployment --timeout=120s || true
 # password and prints a reset link. The account is created through the signup
 # endpoint instead, which takes a password, answers with the API token the
 # rest of the seed uses, and accepts superuser on a self-hosted instance that
-# has no users yet. No feature flags are created; nothing reads one yet.
+# has no users yet. No feature flags are created: no service reads one yet,
+# and the dashboard has a built-in default for each of its own.
 
 mark "flagsmith reconcile wait begin (the second long pull: the Flagsmith image)"
 echo "==> Waiting for the flagsmith Kustomization to reconcile"
@@ -846,9 +859,89 @@ write_bootstrap_secret "flagsmith-bootstrap" "flagsmith" \
     "production=${FLAGSMITH_PRODUCTION_KEY}" \
     "staging=${FLAGSMITH_STAGING_KEY}"
 
+# The dashboard reads its own feature flags from a Flagsmith, the vendor's
+# hosted one unless the Deployment names another. This project is what it is
+# pointed at instead, per Flagsmith's "Running Flagsmith on Flagsmith" docs.
+# It lives in its own organization because Flagsmith's free plan, the default
+# on a self-hosted instance too, allows one project per organization.
+# The API creates no environment with a project (the dashboard's own
+# create-project form adds them), so the one environment is found or created
+# by name like the others.
+echo "==> Ensuring the Flagsmith organization and project for the dashboard's own flags exist"
+FLAGSMITH_DASHBOARD_ORG_ID=$(flagsmith_fact "$(flagsmith_api GET /organisations/)" find "${FLAGSMITH_DASHBOARD_PROJECT}" id || echo "")
+if [ -n "${FLAGSMITH_DASHBOARD_ORG_ID}" ]; then
+    echo "    Organization '${FLAGSMITH_DASHBOARD_PROJECT}' already exists"
+else
+    body='{"name":"'"${FLAGSMITH_DASHBOARD_PROJECT}"'"}'
+    response=$(flagsmith_api POST /organisations/ "${body}")
+    FLAGSMITH_DASHBOARD_ORG_ID=$(flagsmith_fact "${response}" field id || echo "")
+    if [ -z "${FLAGSMITH_DASHBOARD_ORG_ID}" ]; then
+        echo "ERROR: could not create the Flagsmith organization '${FLAGSMITH_DASHBOARD_PROJECT}'" >&2
+        echo "       Flagsmith answered: ${response}" >&2
+        exit 1
+    fi
+    echo "    Organization '${FLAGSMITH_DASHBOARD_PROJECT}' created"
+fi
+FLAGSMITH_DASHBOARD_PROJECT_ID=$(flagsmith_fact "$(flagsmith_api GET /projects/)" find "${FLAGSMITH_DASHBOARD_PROJECT}" id || echo "")
+if [ -n "${FLAGSMITH_DASHBOARD_PROJECT_ID}" ]; then
+    echo "    Project '${FLAGSMITH_DASHBOARD_PROJECT}' already exists"
+else
+    body='{"name":"'"${FLAGSMITH_DASHBOARD_PROJECT}"'","organisation":'"${FLAGSMITH_DASHBOARD_ORG_ID}"'}'
+    response=$(flagsmith_api POST /projects/ "${body}")
+    FLAGSMITH_DASHBOARD_PROJECT_ID=$(flagsmith_fact "${response}" field id || echo "")
+    if [ -z "${FLAGSMITH_DASHBOARD_PROJECT_ID}" ]; then
+        echo "ERROR: could not create the Flagsmith project '${FLAGSMITH_DASHBOARD_PROJECT}'" >&2
+        echo "       Flagsmith answered: ${response}" >&2
+        exit 1
+    fi
+    echo "    Project '${FLAGSMITH_DASHBOARD_PROJECT}' created"
+fi
+
+FLAGSMITH_DASHBOARD_ENVS=$(flagsmith_api GET "/environments/?project=${FLAGSMITH_DASHBOARD_PROJECT_ID}")
+FLAGSMITH_DASHBOARD_KEY=$(flagsmith_fact "${FLAGSMITH_DASHBOARD_ENVS}" find "${FLAGSMITH_DASHBOARD_ENV}" api_key || echo "")
+if [ -n "${FLAGSMITH_DASHBOARD_KEY}" ]; then
+    echo "    Environment '${FLAGSMITH_DASHBOARD_ENV}' already exists"
+else
+    body='{"name":"'"${FLAGSMITH_DASHBOARD_ENV}"'","project":'"${FLAGSMITH_DASHBOARD_PROJECT_ID}"'}'
+    response=$(flagsmith_api POST /environments/ "${body}")
+    FLAGSMITH_DASHBOARD_KEY=$(flagsmith_fact "${response}" field api_key || echo "")
+    if [ -z "${FLAGSMITH_DASHBOARD_KEY}" ]; then
+        echo "ERROR: could not create the Flagsmith environment '${FLAGSMITH_DASHBOARD_ENV}'" >&2
+        echo "       Flagsmith answered: ${response}" >&2
+        exit 1
+    fi
+    echo "    Environment '${FLAGSMITH_DASHBOARD_ENV}' created"
+fi
+
+# What the running server hands the dashboard, read before the port-forward
+# closes. Comparing against this rather than the Secret's old value means a
+# run interrupted between the Secret write and the restart, or a Secret
+# edited by hand, still ends with a restart.
+FLAGSMITH_DASHBOARD_SERVED=$(curl -s --max-time 5 \
+    "http://localhost:${FLAGSMITH_PF_PORT}/config/project-overrides" 2>/dev/null || true)
+
 kill "${FLAGSMITH_PF_PID}" 2>/dev/null || true
 wait "${FLAGSMITH_PF_PID}" 2>/dev/null || true
 FLAGSMITH_PF_PID=""
+
+# The Deployment reads the key from this Secret, optionally, so Flagsmith
+# starts before the seed has run. Django reads its settings once, at process
+# start, so a key it is not already serving reaches the dashboard only
+# through a restart.
+echo "==> Writing the dashboard's client-side key into the ${FLAGSMITH_NS} namespace"
+write_bootstrap_secret -n "${FLAGSMITH_NS}" "flagsmith-dashboard" "flagsmith" \
+    "client-key=${FLAGSMITH_DASHBOARD_KEY}"
+case "${FLAGSMITH_DASHBOARD_SERVED}" in
+    *"\"flagsmith\": \"${FLAGSMITH_DASHBOARD_KEY}\""*)
+        echo "    Flagsmith already serves this key to the dashboard, not restarting"
+        ;;
+    *)
+        mark "flagsmith restart begin"
+        echo "==> Restarting Flagsmith so the dashboard reads its own flags from this instance"
+        kubectl -n "${FLAGSMITH_NS}" rollout restart deployment/flagsmith
+        kubectl -n "${FLAGSMITH_NS}" rollout status deployment/flagsmith --timeout=5m
+        ;;
+esac
 
 # =============================================================================
 # Phase D: Smoke

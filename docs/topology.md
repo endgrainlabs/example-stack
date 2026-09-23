@@ -20,7 +20,7 @@ On a podman machine with 4 CPUs and 8 GiB of memory the stack's
 containers peak just under 3 GiB of memory together when starting.
 The two k3s nodes each burst past a full core while the images load,
 the first run takes under ten minutes from cold start and about
-seven minutes with the images already built. A re-run reconciles in
+nine minutes with the images already built. A re-run reconciles in
 under two minutes. The cluster takes about 5 GiB of the machine's
 disk while it is up and cleans that upon teardown. By default teardown
 keeps the built images and the k3s image, which are under 1 GiB, plus
@@ -101,14 +101,19 @@ reconciles: a bootstrap account, the `example-stack` organization and
 project, and the `staging` and `production` environments. The account's
 API token and the two client-side environment keys go into a
 `flagsmith-bootstrap` Secret in the `example-stack` namespace, under
-the keys `admin-token`, `staging`, and `production`.
+the keys `admin-token`, `staging`, and `production`. A second
+organization and project, both `flagsmith-dashboard`, hold the
+Flagsmith dashboard's own feature flags; its client-side key goes into a `flagsmith-dashboard` Secret in
+the `flagsmith` namespace, under `client-key`, and Flagsmith is
+restarted to read it.
 
 `forgejo-bootstrap` and `flagsmith-bootstrap` are the only two
 Kubernetes objects in the `example-stack` namespace that a script
-writes rather than Flux.
-Both hold values minted while the stack comes up, which cannot be
+writes rather than Flux; the third Secret a script writes,
+`flagsmith-dashboard`, is in the `flagsmith` namespace.
+All three hold values minted while the stack comes up, which cannot be
 written into manifests ahead of time. Flux prunes only what it applied,
-so neither is removed by a reconcile, and both carry an
+so none is removed by a reconcile, and all three carry an
 `app.kubernetes.io/managed-by=setup.sh` label saying so.
 
 The `apps` and `monitoring-flux` kustomizations depend on `monitoring`,

@@ -249,6 +249,18 @@ in the manifests Flux reconciles; `setup.sh` writes the Secret with
 alone, and the `app.kubernetes.io/managed-by` label on it records which script
 owns it. Nothing mounts it yet.
 
+The dashboard reads its own feature flags from a Flagsmith project too, the
+vendor's hosted one by default. The seed creates a second organization and
+project, both `flagsmith-dashboard`, with one environment, `dashboard`, and
+no flags, since the dashboard has a built-in default for each. The
+organization exists because Flagsmith's free plan, the default when
+self-hosting too, allows one project per organization. Its client-side key
+goes into a
+`flagsmith-dashboard` Secret in the `flagsmith` namespace, under
+`client-key`, which the Deployment reads as `FLAGSMITH_ON_FLAGSMITH_API_KEY`;
+`setup.sh` restarts Flagsmith when the key changes, because Django reads it
+only at startup.
+
 The bootstrap login is `bootstrap@flagsmith.local` with the password
 `--flagsmith-password` sets, `example-stack-demo` by default. It is a
 demo-only credential like every other one in this stack. Flagsmith runs

@@ -68,20 +68,22 @@ spec:
             # so both containers of this pair are configured the same way.
             - name: ENABLE_TELEMETRY
               value: "false"
-            # The dashboard runs its own feature flags against Flagsmith's
-            # hosted service, on every page load, before anyone has logged in.
-            # Both settings default to None, and the view that builds the
-            # frontend's config omits a None, which leaves the key and URL the
-            # self-hosted bundle hardcodes in place
-            # (frontend/env/project_selfhosted.js). Empty strings are not None,
-            # so they replace them. The key is what stops the call: the SDK
-            # refuses an empty environment key before it opens a connection.
-            # The URL is blanked with it because the SDK's own fallback is the
-            # same hosted address, so clearing that alone would change nothing.
+            # The dashboard reads its own feature flags from a Flagsmith, the
+            # vendor's hosted one by default. These point it at this one, per
+            # Flagsmith's "Running Flagsmith on Flagsmith" docs. The browser
+            # calls the URL, so it names the host ingress, and setup.sh sets
+            # the port for --ingress-port. The key belongs to the
+            # flagsmith-dashboard project setup.sh seeds, so it is optional:
+            # until the seed's restart, a dashboard opened during bring-up
+            # uses the vendor default.
             - name: FLAGSMITH_ON_FLAGSMITH_API_URL
-              value: ""
+              value: "http://flagsmith.localhost:8090/api/v1/"
             - name: FLAGSMITH_ON_FLAGSMITH_API_KEY
-              value: ""
+              valueFrom:
+                secretKeyRef:
+                  name: flagsmith-dashboard
+                  key: client-key
+                  optional: true
             # One of local, dev, staging, production. It picks defaults inside
             # Flagsmith and is not the name of a Flagsmith environment.
             - name: ENVIRONMENT
