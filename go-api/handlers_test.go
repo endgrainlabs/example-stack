@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	ppb "github.com/endgrainlabs/example-stack/go-grpc/proto/pricingpb"
+	"github.com/endgrainlabs/example-stack/internal/flags"
 )
 
 const testToken = "test-token"
@@ -391,3 +392,74 @@ func TestReadyFollowsTheDatabase(t *testing.T) {
 		t.Errorf("body = %q, want the disconnected database", w.Body.String())
 	}
 }
+
+// fakeFlags stands in for the Flagsmith-backed source: the flags named in it
+// are on, every other one is off.
+type fakeFlags map[string]bool
+
+func (f fakeFlags) Enabled(name string) bool { return f[name] }
+
+// westItem answers the inventory lookup with the west warehouse item, carrying
+// the region rust-inventory adds while its inventory.expose_region flag is on.
+func westItem(region string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, InventoryItem{
+			ID: "a0000000-0000-0000-0000-000000000002", Name: "Gadget",
+			Quantity: 50, Warehouse: "west", Region: region, CreatedAt: "2026-09-10T12:00:00Z",
+		})
+	}
+}
+
+// orders.forward_region passes the item's region to pricing, and only while
+// it is on and the item carries one.
+func TestCreateOrderForwardsRegionOnlyWithTheFlag(t *testing.T) {
+	for _, tt := range []struct {
+		name   string
+		flags  flags.Source
+		region string
+		want   *string
+	}{
+		{"flag on, region present", fakeFlags{flagForwardRegion: true}, "eu-west", ptr("eu-west")},
+		{"flag on, no region", fakeFlags{flagForwardRegion: true}, "", nil},
+		{"flag off, region present", fakeFlags{}, "eu-west", nil},
+		{"no Flagsmith key", flags.New(context.Background(), "", ""), "eu-west", nil},
+		{"no source at all", nil, "eu-west", nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.app.flags = tt.flags
+			h.inventoryHandler = westItem(tt.region)
+
+			w := h.do("POST", "/api/v1/orders", orderBody, nil)
+			if w.Code != http.StatusCreated {
+				t.Fatalf("status = %d, want 201 (body %q)", w.Code, w.Body.String())
+			}
+			got := h.pricing.last.Region
+			switch {
+			case tt.want == nil && got != nil:
+				t.Errorf("pricing asked with region %q, want none", *got)
+			case tt.want != nil && (got == nil || *got != *tt.want):
+				t.Errorf("pricing asked with region %v, want %q", got, *tt.want)
+			}
+		})
+	}
+}
+
+// The USD check is unchanged: a region that pricing answers in EUR is the
+// same 422 an EUR price for any other reason is.
+func TestCreateOrderRegionalPriceIsStillRejected(t *testing.T) {
+	h := newHarness(t)
+	h.app.flags = fakeFlags{flagForwardRegion: true}
+	h.inventoryHandler = westItem("eu-west")
+	h.pricing.currency = "EUR"
+
+	w := h.do("POST", "/api/v1/orders", orderBody, nil)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422 (body %q)", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "unsupported currency: EUR") {
+		t.Errorf("body = %q, want the unsupported currency error", w.Body.String())
+	}
+}
+
+func ptr(s string) *string { return &s }

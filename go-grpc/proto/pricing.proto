@@ -11,6 +11,10 @@ service PricingService {
 message PriceRequest {
   string item_id = 1;
   int32 quantity = 2;
+  // The region of the warehouse the item ships from, for example eu-west.
+  // go-api sends it only while its orders.forward_region flag is on, and
+  // go-grpc prices by it only while its pricing.regional_currency flag is on.
+  optional string region = 3;
 }
 
 message PriceResponse {

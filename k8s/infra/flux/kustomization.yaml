@@ -1,9 +1,12 @@
+# kustomization-apps.yaml is deliberately not listed. setup.sh applies it on
+# its own, after the infra Kustomization is Ready and the Flagsmith seed has
+# written the Secret the services read their flag key from, so the services
+# start with that key on a fresh cluster.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - gitrepository.yaml
-  - kustomization-apps.yaml
   - kustomization-monitoring.yaml
   - kustomization-monitoring-flux.yaml
-  - kustomization-flagsmith.yaml
+  - kustomization-infra.yaml
   - receiver.yaml

@@ -3,10 +3,11 @@ set -euo pipefail
 
 # Brings up the example stack: local registry, k3d cluster, images, an
 # in-cluster Forgejo holding the manifests, Flux reconciling from it, the
-# monitoring stack, the services, a seeded Flagsmith, and a smoke test. The
-# Forgejo and Flagsmith access tokens it mints are left behind in the
-# forgejo-bootstrap and flagsmith-bootstrap Secrets, and the key the Flagsmith
-# dashboard reads its own feature flags with in the flagsmith-dashboard Secret.
+# monitoring stack, PostgreSQL and a seeded Flagsmith, the services, and a
+# smoke test. The Forgejo and Flagsmith access tokens and the Flagsmith
+# environment keys it mints are left behind in the forgejo-bootstrap and
+# flagsmith-bootstrap Secrets, and the key the Flagsmith dashboard reads its
+# own feature flags with in the flagsmith-dashboard Secret.
 #
 # Phases are ordered so a failure costs as little as possible. The registry and
 # the image builds run before any cluster exists, so a broken build never
@@ -16,7 +17,10 @@ set -euo pipefail
 #
 #   A. Builds       local registry up, service images built and pushed
 #   B. Cluster      k3d cluster created and wired to the registry
-#   C. Deploy       Forgejo, Flux, monitoring, services, Flagsmith
+#   C. Deploy       Forgejo, Flux, monitoring, then infra (the namespace,
+#                   PostgreSQL, Flagsmith), the Flagsmith seed, then apps
+#                   (the services), so the services start with the flag key
+#                   the seed writes
 #   D. Smoke        smoke test against the running services
 #
 # Invoke with: bash scripts/setup.sh
@@ -163,10 +167,12 @@ forgejo_exec() {
 #
 #   field KEY        one key of an object
 #   find NAME KEY    one key of the first list entry whose name is NAME
+#   first KEY        one key of the first list entry
 #   names            the name of every list entry, one per line
 #
 # A list answer is either a bare array or a paginated object with "results".
-# Nothing found is a non-zero exit, so callers fall back with || echo "".
+# A boolean prints as true or false, the way the JSON spells it. Nothing found
+# is a non-zero exit, so callers fall back with || echo "".
 flagsmith_fact() {
     local response="$1"
     shift
@@ -180,12 +186,16 @@ try:
 except ValueError:
     sys.exit(1)
 
-if mode == "field":
-    value = doc.get(sys.argv[2]) if isinstance(doc, dict) else None
+
+def emit(value):
     if value is None:
         sys.exit(1)
-    print(value)
+    print(json.dumps(value) if isinstance(value, bool) else value)
     sys.exit(0)
+
+
+if mode == "field":
+    emit(doc.get(sys.argv[2]) if isinstance(doc, dict) else None)
 
 items = doc.get("results", []) if isinstance(doc, dict) else doc
 if mode == "names":
@@ -193,10 +203,12 @@ if mode == "names":
         print(item["name"])
     sys.exit(0)
 
+if mode == "first":
+    emit(items[0].get(sys.argv[2]) if items else None)
+
 for item in items:
     if item["name"] == sys.argv[2]:
-        print(item[sys.argv[3]])
-        sys.exit(0)
+        emit(item[sys.argv[3]])
 sys.exit(1)
 ' "$@" 2>/dev/null
 }
@@ -229,7 +241,7 @@ write_bootstrap_secret() {
 }
 
 # A call to the Flagsmith API with the bootstrap token attached. The token and
-# the base URL are set in phase C9, before the first call.
+# the base URL are set in phase C8, before the first call.
 flagsmith_api() {
     local method="$1"
     local path="$2"
@@ -575,6 +587,8 @@ mkdir -p "${WORK_DIR}/k8s/apps" "${WORK_DIR}/k8s/infra"
 cp -R "${REPO_ROOT}/k8s/apps/base" "${WORK_DIR}/k8s/apps/base"
 cp -R "${REPO_ROOT}/k8s/infra/monitoring" "${WORK_DIR}/k8s/infra/monitoring"
 cp -R "${REPO_ROOT}/k8s/infra/monitoring-flux" "${WORK_DIR}/k8s/infra/monitoring-flux"
+cp -R "${REPO_ROOT}/k8s/infra/base" "${WORK_DIR}/k8s/infra/base"
+cp -R "${REPO_ROOT}/k8s/infra/postgres" "${WORK_DIR}/k8s/infra/postgres"
 cp -R "${REPO_ROOT}/k8s/infra/flagsmith" "${WORK_DIR}/k8s/infra/flagsmith"
 
 # The landing page and the UI print browser URLs, which carry the host ingress
@@ -599,7 +613,10 @@ fi
     git init -q
     git checkout -q -b main
     git -c user.email="${FORGEJO_ADMIN_EMAIL}" -c user.name="${FORGEJO_ADMIN_USER}" add -A
-    git -c user.email="${FORGEJO_ADMIN_EMAIL}" -c user.name="${FORGEJO_ADMIN_USER}" commit -q -m "seed: example stack manifests"
+    # The bootstrap user's commit into the in-cluster repository, so the
+    # operator's signing setup, if any, does not apply.
+    git -c user.email="${FORGEJO_ADMIN_EMAIL}" -c user.name="${FORGEJO_ADMIN_USER}" \
+        -c commit.gpgsign=false commit -q -m "seed: example stack manifests"
     git remote add origin "http://${FORGEJO_ADMIN_USER}:${FORGEJO_TOKEN}@localhost:${FORGEJO_PF_PORT}/${FORGEJO_ORG}/${FORGEJO_REPO}.git"
     git push -f -q origin main
 )
@@ -629,8 +646,11 @@ for deploy in source-controller kustomize-controller helm-controller notificatio
 done
 
 # --- C5: Apply the Flux source and Kustomizations ---
+#
+# Everything but apps, which C9 applies once the seed has written the Secret
+# the services read their Flagsmith key from.
 
-echo "==> Applying Flux sources and Kustomizations"
+echo "==> Applying the Flux source and the monitoring and infra Kustomizations"
 kubectl apply -k "${REPO_ROOT}/k8s/infra/flux"
 
 # --- C6: Wire the Forgejo webhook to the Flux Receiver ---
@@ -691,8 +711,9 @@ mark "monitoring reconcile wait begin (the long pull: kube-prometheus-stack)"
 echo "==> Waiting for the monitoring Kustomization to reconcile (its HelmRelease installs the custom resource definitions the services depend on; the first install takes several minutes)"
 kubectl -n flux-system wait --for=condition=Ready --timeout=20m kustomization/monitoring
 
-echo "==> Waiting for the apps Kustomization to reconcile"
-kubectl -n flux-system wait --for=condition=Ready --timeout=5m kustomization/apps
+mark "infra reconcile wait begin (the second long pull: the Flagsmith image)"
+echo "==> Waiting for the infra Kustomization to reconcile (the namespace, PostgreSQL, Flagsmith)"
+kubectl -n flux-system wait --for=condition=Ready --timeout=10m kustomization/infra
 
 # The namespace exists now, which is why this is not back in C2 where the
 # token was minted. The scenario scripts reuse this token instead of minting
@@ -700,29 +721,16 @@ kubectl -n flux-system wait --for=condition=Ready --timeout=5m kustomization/app
 echo "==> Storing the Forgejo access token for the scenario scripts"
 write_bootstrap_secret "forgejo-bootstrap" "forgejo" "token=${FORGEJO_TOKEN}"
 
-# --- C8: Roll the services so they pick up freshly built images ---
-#
-# Builds run before the cluster exists, so the first reconciliation already
-# pulls the current images. The restart covers the incremental case, where a
-# rebuild under the same tag would not otherwise trigger a redeploy.
-
-echo "==> Rolling restart of the services to pick up rebuilt images"
-kubectl -n "${NAMESPACE}" rollout restart deployment/go-api deployment/go-grpc deployment/rust-inventory 2>/dev/null || true
-kubectl -n "${NAMESPACE}" rollout status deployment --timeout=120s || true
-
-# --- C9: Seed Flagsmith ---
+# --- C8: Seed Flagsmith ---
 #
 # Flagsmith has no way to create its first user with a known password from the
 # environment: the image's bootstrap command creates one with an unusable
 # password and prints a reset link. The account is created through the signup
 # endpoint instead, which takes a password, answers with the API token the
 # rest of the seed uses, and accepts superuser on a self-hosted instance that
-# has no users yet. No feature flags are created: no service reads one yet,
-# and the dashboard has a built-in default for each of its own.
-
-mark "flagsmith reconcile wait begin (the second long pull: the Flagsmith image)"
-echo "==> Waiting for the flagsmith Kustomization to reconcile"
-kubectl -n flux-system wait --for=condition=Ready --timeout=10m kustomization/flagsmith
+# has no users yet. The services' three feature flags are created off, and
+# the dashboard's own flags are not created at all: it has a built-in default
+# for each.
 
 echo "==> Port-forwarding Flagsmith for bootstrap"
 kubectl -n "${FLAGSMITH_NS}" port-forward "svc/flagsmith" "${FLAGSMITH_PF_PORT}:8000" &>/dev/null &
@@ -848,16 +856,108 @@ for env_name in staging production; do
     esac
 done
 
-# The admin token joins the two environment keys so a later run, a scenario,
-# or a person has an authenticated way into Flagsmith without signing in
-# again. validate-stack.sh reads the two environment keys back out to check
-# the seeded project; nothing else reads any of it yet, and the SDKs will
-# read the environment keys.
+# The services evaluate flags locally, from the whole environment document,
+# and Flagsmith serves that document only for a server-side key (ser.). One
+# key named after the project is kept per environment: found by name on a
+# re-run, created otherwise, so re-runs do not pile up keys.
+echo "==> Ensuring the Flagsmith server-side environment keys exist"
+FLAGSMITH_STAGING_SERVER_KEY=""
+FLAGSMITH_PRODUCTION_SERVER_KEY=""
+for env_name in staging production; do
+    case "${env_name}" in
+        staging)    env_key="${FLAGSMITH_STAGING_KEY}" ;;
+        production) env_key="${FLAGSMITH_PRODUCTION_KEY}" ;;
+    esac
+    server_key=$(flagsmith_fact "$(flagsmith_api GET "/environments/${env_key}/api-keys/")" \
+        find "${FLAGSMITH_PROJECT}" key || echo "")
+    if [ -n "${server_key}" ]; then
+        echo "    Server-side key '${FLAGSMITH_PROJECT}' for '${env_name}' already exists"
+    else
+        body='{"name":"'"${FLAGSMITH_PROJECT}"'"}'
+        response=$(flagsmith_api POST "/environments/${env_key}/api-keys/" "${body}")
+        server_key=$(flagsmith_fact "${response}" field key || echo "")
+        case "${server_key}" in
+            ser.*) ;;
+            *)
+                echo "ERROR: could not create a server-side key for the Flagsmith environment '${env_name}'" >&2
+                echo "       Flagsmith answered: ${response}" >&2
+                exit 1
+                ;;
+        esac
+        echo "    Server-side key '${FLAGSMITH_PROJECT}' for '${env_name}' created"
+    fi
+    case "${env_name}" in
+        staging)    FLAGSMITH_STAGING_SERVER_KEY="${server_key}" ;;
+        production) FLAGSMITH_PRODUCTION_SERVER_KEY="${server_key}" ;;
+    esac
+done
+
+# The flags the services read, one per service. Features belong to the
+# project and Flagsmith gives each one a state in every environment when it
+# is created, off here. A re-run finds a feature by name and turns its state
+# off again in each environment, so setup.sh leaves the stack at its baseline
+# the way its manifest push does; a scenario that turns them on resets them
+# itself.
+echo "==> Ensuring the Flagsmith features exist and are off"
+FLAGSMITH_FEATURES=$(flagsmith_api GET "/projects/${FLAGSMITH_PROJECT_ID}/features/")
+for feature in inventory.expose_region orders.forward_region pricing.regional_currency; do
+    feature_id=$(flagsmith_fact "${FLAGSMITH_FEATURES}" find "${feature}" id || echo "")
+    if [ -n "${feature_id}" ]; then
+        echo "    Feature '${feature}' already exists"
+    else
+        body='{"name":"'"${feature}"'","default_enabled":false}'
+        response=$(flagsmith_api POST "/projects/${FLAGSMITH_PROJECT_ID}/features/" "${body}")
+        feature_id=$(flagsmith_fact "${response}" field id || echo "")
+        if [ -z "${feature_id}" ]; then
+            echo "ERROR: could not create the Flagsmith feature '${feature}'" >&2
+            echo "       Flagsmith answered: ${response}" >&2
+            exit 1
+        fi
+        echo "    Feature '${feature}' created"
+    fi
+
+    for env_name in staging production; do
+        case "${env_name}" in
+            staging)    env_key="${FLAGSMITH_STAGING_KEY}" ;;
+            production) env_key="${FLAGSMITH_PRODUCTION_KEY}" ;;
+        esac
+        # The environment's own state for the feature, not a segment's or an
+        # identity's: this endpoint lists only those.
+        states=$(flagsmith_api GET "/environments/${env_key}/featurestates/?feature=${feature_id}")
+        state_id=$(flagsmith_fact "${states}" first id || echo "")
+        state_enabled=$(flagsmith_fact "${states}" first enabled || echo "")
+        if [ -z "${state_id}" ]; then
+            echo "ERROR: Flagsmith has no state for feature '${feature}' in '${env_name}'" >&2
+            echo "       Flagsmith answered: ${states}" >&2
+            exit 1
+        fi
+        if [ "${state_enabled}" = "false" ]; then
+            echo "    '${feature}' is off in '${env_name}'"
+            continue
+        fi
+        body='{"enabled":false}'
+        response=$(flagsmith_api PUT "/environments/${env_key}/featurestates/${state_id}/" "${body}")
+        if [ "$(flagsmith_fact "${response}" field enabled || echo "")" != "false" ]; then
+            echo "ERROR: could not turn feature '${feature}' off in '${env_name}'" >&2
+            echo "       Flagsmith answered: ${response}" >&2
+            exit 1
+        fi
+        echo "    '${feature}' was on in '${env_name}', turned off"
+    done
+done
+
+# The admin token joins the environment keys so a later run, a scenario, or a
+# person has an authenticated way into Flagsmith without signing in again.
+# validate-stack.sh reads the environment keys back out to check the seeded
+# project, and the three services read production-server, through an
+# optional reference, to evaluate their flags.
 echo "==> Writing the Flagsmith bootstrap Secret into the ${NAMESPACE} namespace"
 write_bootstrap_secret "flagsmith-bootstrap" "flagsmith" \
     "admin-token=${FLAGSMITH_TOKEN}" \
     "production=${FLAGSMITH_PRODUCTION_KEY}" \
-    "staging=${FLAGSMITH_STAGING_KEY}"
+    "staging=${FLAGSMITH_STAGING_KEY}" \
+    "production-server=${FLAGSMITH_PRODUCTION_SERVER_KEY}" \
+    "staging-server=${FLAGSMITH_STAGING_SERVER_KEY}"
 
 # The dashboard reads its own feature flags from a Flagsmith, the vendor's
 # hosted one unless the Deployment names another. This project is what it is
@@ -942,6 +1042,28 @@ case "${FLAGSMITH_DASHBOARD_SERVED}" in
         kubectl -n "${FLAGSMITH_NS}" rollout status deployment/flagsmith --timeout=5m
         ;;
 esac
+
+# --- C9: Apply the apps Kustomization ---
+#
+# Applied only now, so on a fresh cluster the services start with the
+# server-side key the seed just wrote.
+
+mark "apps reconcile wait begin"
+echo "==> Applying the apps Kustomization"
+kubectl apply -f "${REPO_ROOT}/k8s/infra/flux/kustomization-apps.yaml"
+
+echo "==> Waiting for the apps Kustomization to reconcile"
+kubectl -n flux-system wait --for=condition=Ready --timeout=5m kustomization/apps
+
+# --- C10: Roll the services so they pick up freshly built images ---
+#
+# Builds run before the cluster exists, so the first reconciliation already
+# pulls the current images. The restart covers the incremental case, where a
+# rebuild under the same tag would not otherwise trigger a redeploy.
+
+echo "==> Rolling restart of the services to pick up rebuilt images"
+kubectl -n "${NAMESPACE}" rollout restart deployment/go-api deployment/go-grpc deployment/rust-inventory 2>/dev/null || true
+kubectl -n "${NAMESPACE}" rollout status deployment --timeout=120s || true
 
 # =============================================================================
 # Phase D: Smoke

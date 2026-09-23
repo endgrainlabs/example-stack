@@ -1,3 +1,9 @@
+# The services and their migration Jobs. It depends on monitoring only, for
+# the ServiceMonitor and PrometheusRule definitions, and not on infra even
+# though it needs the namespace and PostgreSQL infra brings up: Flux checks
+# dependsOn on every reconcile, so a Flagsmith that is down would stop the
+# services from reconciling. setup.sh applies this after infra is Ready, and
+# the scenario scripts repoint its path at their overlays.
 apiVersion: kustomize.toolkit.fluxcd.io/v1
 kind: Kustomization
 metadata:

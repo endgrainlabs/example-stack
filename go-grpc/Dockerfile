@@ -16,6 +16,7 @@ RUN --mount=type=cache,id=example-stack-go-cache,target=/go/pkg/mod \
     fi && \
     go mod download
 COPY go-grpc/ ./go-grpc/
+COPY internal/ ./internal/
 RUN --mount=type=cache,id=example-stack-go-cache,target=/go/pkg/mod \
     --mount=type=cache,id=example-stack-go-build,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -o /go-grpc ./go-grpc

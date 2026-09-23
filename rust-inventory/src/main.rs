@@ -7,6 +7,9 @@ use tokio_postgres::{Client, NoTls};
 
 mod db;
 #[cfg(test)]
+mod flag_tests;
+mod flags;
+#[cfg(test)]
 mod tests;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -16,6 +19,37 @@ struct InventoryItem {
     quantity: i32,
     warehouse: String,
     created_at: String,
+    /// Present only while inventory.expose_region is on, so with the flag off
+    /// a response is byte for byte what it was before the flag existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    region: Option<String>,
+}
+
+impl InventoryItem {
+    /// An item as the list and get responses carry it: with its warehouse's
+    /// region while inventory.expose_region is on.
+    fn listed(
+        id: String,
+        name: String,
+        quantity: i32,
+        warehouse: String,
+        created_at: String,
+        source: &dyn flags::FlagSource,
+    ) -> Self {
+        let region = if source.enabled(flags::EXPOSE_REGION) {
+            flags::region_for(&warehouse).map(str::to_string)
+        } else {
+            None
+        };
+        InventoryItem {
+            id,
+            name,
+            quantity,
+            warehouse,
+            created_at,
+            region,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -32,6 +66,7 @@ struct AppState {
     db: Mutex<Option<Client>>,
     db_url: String,
     api_token: String,
+    flags: Arc<dyn flags::FlagSource>,
 }
 
 impl AppState {
@@ -119,6 +154,7 @@ async fn main() -> std::io::Result<()> {
         db: Mutex::new(Some(client)),
         db_url,
         api_token,
+        flags: flags::from_env(),
     });
 
     println!("rust-inventory listening on {}", listen_addr);
@@ -195,13 +231,14 @@ async fn list_items(req: HttpRequest, state: web::Data<Arc<AppState>>) -> HttpRe
             let items: Vec<InventoryItem> = rows.iter().map(|row| {
                 let id: uuid::Uuid = row.get(0);
                 let created_at: chrono::NaiveDateTime = row.get(4);
-                InventoryItem {
-                    id: id.to_string(),
-                    name: row.get(1),
-                    quantity: row.get(2),
-                    warehouse: row.get(3),
-                    created_at: created_at.to_string(),
-                }
+                InventoryItem::listed(
+                    id.to_string(),
+                    row.get(1),
+                    row.get(2),
+                    row.get(3),
+                    created_at.to_string(),
+                    state.flags.as_ref(),
+                )
             }).collect();
             HttpResponse::Ok().json(serde_json::json!({"items": items, "count": items.len()}))
         }
@@ -253,6 +290,7 @@ async fn create_item(
                         quantity: body.quantity,
                         warehouse: body.warehouse.clone(),
                         created_at: created_at.to_string(),
+                        region: None,
                     })
                 }
                 Err(e) => HttpResponse::InternalServerError()
@@ -295,13 +333,14 @@ async fn get_item(
     {
         Ok(Some(row)) => {
             let created_at: chrono::NaiveDateTime = row.get(4);
-            HttpResponse::Ok().json(InventoryItem {
-                id: id.to_string(),
-                name: row.get(1),
-                quantity: row.get(2),
-                warehouse: row.get(3),
-                created_at: created_at.to_string(),
-            })
+            HttpResponse::Ok().json(InventoryItem::listed(
+                id.to_string(),
+                row.get(1),
+                row.get(2),
+                row.get(3),
+                created_at.to_string(),
+                state.flags.as_ref(),
+            ))
         }
         Ok(None) => HttpResponse::NotFound().json(serde_json::json!({"error": "not found"})),
         Err(e) => {

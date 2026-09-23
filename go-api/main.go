@@ -26,6 +26,7 @@ import (
 	"google.golang.org/grpc/metadata"
 
 	ppb "github.com/endgrainlabs/example-stack/go-grpc/proto/pricingpb"
+	"github.com/endgrainlabs/example-stack/internal/flags"
 )
 
 // Order represents a composed order stored in Postgres.
@@ -41,14 +42,19 @@ type Order struct {
 	CreatedAt string  `json:"created_at"`
 }
 
-// InventoryItem is the response shape from rust-inventory.
+// InventoryItem is the response shape from rust-inventory. Region is present
+// only while rust-inventory's inventory.expose_region flag is on.
 type InventoryItem struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
 	Quantity  int32  `json:"quantity"`
 	Warehouse string `json:"warehouse"`
+	Region    string `json:"region,omitempty"`
 	CreatedAt string `json:"created_at"`
 }
+
+// flagForwardRegion passes the inventory item's region on to pricing.
+const flagForwardRegion = "orders.forward_region"
 
 // backendTimeout bounds every call go-api makes to another service. The
 // HTTP client has always carried it; the gRPC client inherits the request
@@ -61,6 +67,7 @@ type app struct {
 	inventoryURL string
 	httpClient   *http.Client
 	apiToken     string
+	flags        flags.Source
 }
 
 var (
@@ -155,6 +162,7 @@ func main() {
 		inventoryURL: inventoryURL,
 		httpClient:   &http.Client{Timeout: backendTimeout},
 		apiToken:     apiToken,
+		flags:        flags.FromEnv(context.Background()),
 	}
 
 	log.Printf("go-api listening on %s", addr)
@@ -287,10 +295,14 @@ func (a *app) handleCreateOrder(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), backendTimeout)
 	defer cancel()
 	ctx = metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer "+a.apiToken)
-	priceResp, err := a.pricing.GetPrice(ctx, &ppb.PriceRequest{
+	priceReq := &ppb.PriceRequest{
 		ItemId:   req.ItemID,
 		Quantity: req.Quantity,
-	})
+	}
+	if item.Region != "" && flags.On(a.flags, flagForwardRegion) {
+		priceReq.Region = &item.Region
+	}
+	priceResp, err := a.pricing.GetPrice(ctx, priceReq)
 	if err != nil {
 		log.Printf("pricing lookup failed: %v", err)
 		http.Error(w, fmt.Sprintf(`{"error":"pricing lookup failed: %v"}`, err), http.StatusBadGateway)

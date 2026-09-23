@@ -13,3 +13,6 @@ uuid = { version = "1.23", features = ["v4"] }
 chrono = { version = "0.4.44", features = ["serde"] }
 actix-web-prom = "0.10"
 prometheus = "0.14"
+# Plain HTTP to the in-cluster Flagsmith, so no TLS stack and no C toolchain
+# in the image build.
+ureq = { version = "3.4", default-features = false }

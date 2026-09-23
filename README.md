@@ -29,9 +29,11 @@ is self-contained after startup (see [Prerequisites](#prerequisites) and
   - Pre-configured with per-service dashboards, recording rules for error rate
     and latency, and alerting rules.
 - Flagsmith, self-hosted, for feature flags
-  - Seeded with an `example-stack` organization and project and two
-    environments, `staging` and `production`
-  - No flags are defined and no service reads one yet
+  - Seeded with an `example-stack` organization and project, two
+    environments, `staging` and `production`, and three flags, all off
+  - Each service reads one flag, evaluated locally from the `production`
+    environment and refreshed every ten seconds; see
+    [docs/services.md](docs/services.md#feature-flags)
 - A local image registry that the cluster pulls from.
 - Three failure scenarios that break the stack in a specific way and revert.
 
@@ -41,9 +43,12 @@ This is how they are organized in the repository
 go-api/          Go HTTP frontend service
 go-grpc/         Go gRPC pricing and echo service, and its protos
 rust-inventory/  Rust HTTP inventory service
+internal/        Go packages the Go services share (feature flags)
 migrate/         goose migration runner and the migration SQL
-k8s/apps/base/   the services, their Ingresses, dashboards, and alert rules
-k8s/infra/       Forgejo, Flux, the monitoring stack, and Flagsmith
+k8s/apps/base/   the services, their migration Jobs, Ingresses, dashboards,
+                 and alert rules
+k8s/infra/       the namespace and PostgreSQL, Forgejo, Flux, the monitoring
+                 stack, and Flagsmith
 scenarios/       the failure scenarios and their overlays
 scripts/         bring-up, teardown, build, smoke, validation
 docs/            topology, services, scenarios
@@ -133,8 +138,8 @@ has more details.
 The project is intended to be run with make targets that call bash scripts.
 
 ```sh
-make up        # registry, cluster, images, GitOps, monitoring, services,
-               # Flagsmith, smoke
+make up        # registry, cluster, images, GitOps, monitoring, PostgreSQL
+               # and Flagsmith, the Flagsmith seed, services, smoke
 make smoke     # exercise the service APIs
 make validate  # pods, ingress, host port boundary, metrics, Prometheus
                # targets, the Flagsmith seed, Flux
@@ -229,7 +234,7 @@ way on any machine. None of it is a production secret.
 | System | Credential | Where it is set |
 |---|---|---|
 | Service APIs (`go-api`, `rust-inventory`, `go-grpc`) | bearer token `dev-token` | `k8s/apps/base/secrets.yaml` |
-| PostgreSQL | user `postgres`, password `postgres` | `k8s/apps/base/secrets.yaml` |
+| PostgreSQL | user `postgres`, password `postgres` | `k8s/infra/postgres/secret.yaml`, and the connection strings in `k8s/apps/base/secrets.yaml` |
 | Forgejo | user `bootstrap`, password `password` | `--forgejo-password` on `scripts/setup.sh` |
 | Grafana | `admin` / `admin` | `k8s/infra/monitoring/helmrelease.yaml` |
 | Flux Receiver webhook | shared secret `example-stack-webhook-secret` | `k8s/infra/flux/receiver.yaml` |
@@ -301,7 +306,10 @@ There are four layers of testing. All exit non-zero on failure.
   service contract, including the `REGIONAL_PRICING` rules, and the order in
   which `migrate` applies its embedded set and an `-extra-dir`. The Rust tests
   run the `rust-inventory` handlers that answer before a query: authentication,
-  request validation, and liveness.
+  request validation, and liveness. In both languages each service's feature
+  flag is tested on and off against a fake flag source, and the Flagsmith
+  client wrapper with no key, with a local stand-in serving an environment
+  document, and with nothing listening.
 - **`scripts/smoke-test.sh`** checks service behavior on a live stack:
   migration Jobs succeeded, health and readiness,
   authentication rejection, the seeded inventory, order creation across the
@@ -310,8 +318,9 @@ There are four layers of testing. All exit non-zero on failure.
   ingress resolution, that each of the three host ports answers on 127.0.0.1
   and not on the machine's own network address, `/metrics` endpoints,
   Prometheus scrape targets, alert rules loaded, alerts not firing, that both
-  seeded Flagsmith environments answer for the keys the bring-up stored, and
-  Flux reconciliation status. It does not run the scenarios.
+  seeded Flagsmith environments answer for the client-side and server-side
+  keys the bring-up stored and carry the three service flags, and Flux
+  reconciliation status. It does not run the scenarios.
 - **`--verify` on a scenario's `demo.sh`** checks that the scenario broke what
   it expects to break, and that `--reset` put the stack back correctly.
 

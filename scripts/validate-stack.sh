@@ -158,6 +158,41 @@ check_flagsmith_environment() {
     fi
 }
 
+# Asks Flagsmith for one environment's document with that environment's
+# server-side key, the request the services' SDKs make every ten seconds.
+# Flagsmith serves the document to a server-side key only, so a 200 means the
+# key is good, and the document has to name each of the services' flags.
+check_flagsmith_server_key() {
+    local env_name="$1"
+    local key body status feature missing
+    key=$(kubectl -n "${NAMESPACE}" get secret flagsmith-bootstrap \
+        -o "jsonpath={.data.${env_name}-server}" 2>/dev/null | base64 --decode 2>/dev/null || echo "")
+    if [ -z "${key}" ]; then
+        fail "flagsmith ${env_name} server-side key (no '${env_name}-server' key in the flagsmith-bootstrap Secret)"
+        return
+    fi
+    body=$(curl -s --max-time 5 -w '\n%{http_code}' \
+        -H "X-Environment-Key: ${key}" \
+        "http://flagsmith.localhost:${INGRESS_PORT}/api/v1/environment-document/" 2>/dev/null || true)
+    status="${body##*$'\n'}"
+    if [ "${status}" != "200" ]; then
+        fail "flagsmith ${env_name} server-side key (got ${status:-000}, expected 200)"
+        return
+    fi
+    missing=""
+    for feature in inventory.expose_region orders.forward_region pricing.regional_currency; do
+        case "${body}" in
+            *"\"${feature}\""*) ;;
+            *) missing="${missing} ${feature}" ;;
+        esac
+    done
+    if [ -n "${missing}" ]; then
+        fail "flagsmith ${env_name} environment document (missing:${missing})"
+    else
+        pass "flagsmith ${env_name} server-side key and the three service flags"
+    fi
+}
+
 # The dashboard learns where to read its own feature flags from
 # /config/project-overrides, a script that sets window.projectOverrides from
 # the server's settings. The key there has to be the one the bring-up wrote
@@ -295,6 +330,8 @@ echo ""
 echo "==> Flagsmith environments"
 check_flagsmith_environment "staging"
 check_flagsmith_environment "production"
+check_flagsmith_server_key "staging"
+check_flagsmith_server_key "production"
 check_flagsmith_dashboard
 
 # --- Metrics endpoints (via port-forward) ---
@@ -536,7 +573,7 @@ fi
 echo ""
 echo "==> Flux reconciliation"
 
-for ks in apps monitoring monitoring-flux flagsmith; do
+for ks in apps monitoring monitoring-flux infra; do
     READY=$(kubectl -n "${FLUX_NS}" get kustomization "${ks}" -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || echo "Unknown")
     if [ "${READY}" = "True" ]; then
         pass "kustomization/${ks} ready"

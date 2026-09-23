@@ -1,12 +1,13 @@
 # The build context is the repository root, and the four Dockerfiles copy only
-# the Go module files and the four service directories. Everything else is
-# excluded here so it neither slows the build nor reaches an image: exclude
-# all, then name back what a COPY needs.
+# the Go module files, the four service directories, and the Go packages the
+# services share. Everything else is excluded here so it neither slows the
+# build nor reaches an image: exclude all, then name back what a COPY needs.
 *
 !go.mod
 !go.sum
 !go-api
 !go-grpc
+!internal
 !migrate
 !rust-inventory
 

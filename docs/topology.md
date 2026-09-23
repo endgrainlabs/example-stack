@@ -46,7 +46,7 @@ Namespaces:
 
 | Namespace | Description |
 |---|---|
-| `example-stack` | the services, PostgreSQL, the migration Jobs, the landing page, dashboards, alert rules |
+| `example-stack` | the services, PostgreSQL, the migration Jobs, the landing page, dashboards, alert rules. The namespace and PostgreSQL come from the `infra` Kustomization, the rest of what Flux applies here from `apps` |
 | `forgejo` | the in-cluster Git server |
 | `flux-system` | the Flux controllers, the GitRepository, the Kustomizations, the Receiver |
 | `monitoring` | kube-prometheus-stack and the HelmRelease that manages it |
@@ -84,28 +84,38 @@ Forgejo API. That token is stored in a `forgejo-bootstrap` Secret once
 the services' namespace exists, and the scenario scripts reuse it
 rather than minting one on every run.
 3. pushes a snapshot of `k8s/apps/base`,
-`k8s/infra/monitoring`, `k8s/infra/monitoring-flux`, and
-`k8s/infra/flagsmith` into that repository.
+`k8s/infra/monitoring`, `k8s/infra/monitoring-flux`, `k8s/infra/base`,
+`k8s/infra/postgres`, and `k8s/infra/flagsmith` into that repository.
 4. installs Flux from the pinned upstream manifest for `v2.8.5`. The
 image reflector and image automation controllers are scaled to zero:
 the stack defines no image automation resources and they would idle at
 real cost.
 5. applies the Flux objects in `k8s/infra/flux`: a `GitRepository`
-pointed at the in-cluster Forgejo, four `Kustomization` objects
-(`monitoring`, `apps`, `monitoring-flux`, `flagsmith`), and a
-`Receiver`.
+pointed at the in-cluster Forgejo, three `Kustomization` objects
+(`monitoring`, `monitoring-flux`, `infra`), and a `Receiver`.
 6. creates a Forgejo webhook that calls the Receiver, so a push
 reconciles immediately instead of waiting for the poll interval.
-7. seeds Flagsmith through its REST API once that Kustomization
-reconciles: a bootstrap account, the `example-stack` organization and
-project, and the `staging` and `production` environments. The account's
-API token and the two client-side environment keys go into a
+7. waits for `monitoring`, then for `infra`, which brings up the
+`example-stack` namespace, PostgreSQL, and Flagsmith.
+8. seeds Flagsmith through its REST API: a bootstrap account, the
+`example-stack` organization and project, the `staging` and
+`production` environments, one server-side key named `example-stack`
+in each environment, and three features, `inventory.expose_region`,
+`orders.forward_region`, and `pricing.regional_currency`, off in both
+environments. A re-run finds each of these by name and turns the three
+features off again. The account's API token, the two client-side
+environment keys, and the two server-side keys go into a
 `flagsmith-bootstrap` Secret in the `example-stack` namespace, under
-the keys `admin-token`, `staging`, and `production`. A second
-organization and project, both `flagsmith-dashboard`, hold the
-Flagsmith dashboard's own feature flags; its client-side key goes into a `flagsmith-dashboard` Secret in
+the keys `admin-token`, `staging`, `production`, `staging-server`, and
+`production-server`. A second organization and project, both
+`flagsmith-dashboard`, hold the Flagsmith dashboard's own feature
+flags; its client-side key goes into a `flagsmith-dashboard` Secret in
 the `flagsmith` namespace, under `client-key`, and Flagsmith is
 restarted to read it.
+9. applies the fourth `Kustomization`, `apps`, from
+`k8s/infra/flux/kustomization-apps.yaml`, which the directory's own
+kustomization leaves out, and waits for it. The services therefore
+start with the server-side key already in the Secret.
 
 `forgejo-bootstrap` and `flagsmith-bootstrap` are the only two
 Kubernetes objects in the `example-stack` namespace that a script
@@ -116,12 +126,17 @@ written into manifests ahead of time. Flux prunes only what it applied,
 so none is removed by a reconcile, and all three carry an
 `app.kubernetes.io/managed-by=setup.sh` label saying so.
 
-The `apps` and `monitoring-flux` kustomizations depend on `monitoring`,
-because the Prometheus operator custom resource definitions must exist
-before a `ServiceMonitor` or a `PrometheusRule` will apply. `flagsmith`
-depends on `apps`: it registers a `ServiceMonitor` too, and its
-migration Job needs the `flagsmith` database in the PostgreSQL that
-`apps` brings up.
+`infra`, `apps`, and `monitoring-flux` each depend on `monitoring` and
+on nothing else, because the Prometheus operator custom resource
+definitions must exist before a `ServiceMonitor` or a `PrometheusRule`
+will apply. `apps` needs the namespace and the PostgreSQL that `infra`
+brings up, but it does not declare that as a dependency: Flux checks
+`dependsOn` on every reconcile, not only the first, so an `apps` that
+depended on `infra` would stop reconciling whenever Flagsmith was down.
+`setup.sh` orders the two at bring-up instead, and the namespace is
+declared in `infra` alone, so nothing a scenario does to `apps` can
+prune it. Flagsmith's migration Job starts in the same reconcile as
+PostgreSQL and retries until the database answers.
 
 A failure scenario works in the same way. It clones the Forgejo
 repository, commits an overlay, pushes, and patches the `apps`
@@ -189,7 +204,11 @@ is plain YAML rendered by kustomize.
 `go-api` is the service a client talks to. Creating an order calls
 `rust-inventory` to check stock, calls `go-grpc` for a price, validates
 the currency, and writes the order to its own database. All calls
-between services use in-cluster Service names.
+between services use in-cluster Service names. Each of the three also
+fetches its feature flags from the Flagsmith API in the `flagsmith`
+namespace every ten seconds. Until it has reached Flagsmith once, or
+with no key at all, it reads every flag as off;
+[services.md](services.md#feature-flags) has the details.
 
 A single PostgreSQL Deployment holds all three databases.
 `rust-inventory` owns `inventory`, `go-api` owns `orders`, and the

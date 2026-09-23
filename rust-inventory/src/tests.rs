@@ -3,6 +3,7 @@
 //! request validation, and the liveness endpoint. Anything that reaches the
 //! database answers 503 and is covered by the smoke test against the cluster.
 
+use crate::flags;
 use crate::{routes, AppState};
 use actix_web::{http::StatusCode, test, web, App};
 use std::sync::Arc;
@@ -15,6 +16,7 @@ fn state() -> Arc<AppState> {
         db: Mutex::new(None),
         db_url: String::new(),
         api_token: TOKEN.to_string(),
+        flags: Arc::new(flags::Off),
     })
 }
 
