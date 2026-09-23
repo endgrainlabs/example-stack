@@ -1,6 +1,6 @@
 # Agent guide
 
-This repository is a small distributed system on a local k3d cluster that breaks in realistic ways on demand. Go and Rust services live in `go-api/`, `go-grpc/`, `rust-inventory/`, and `migrate/` as one Go module plus one cargo crate; `k8s/` holds the manifests (`apps/base` for the services, `infra/` for Forgejo, Flux, monitoring, and Flagsmith); `scenarios/` holds the failure scenarios and their kustomize overlays; `scripts/` holds bring-up, teardown, build, smoke, and validation; `docs/` holds the topology, service, and scenario pages.
+This repository is a small distributed system on a local k3d cluster that breaks in realistic ways on demand. Go and Rust services live in `go-api/`, `go-grpc/`, `rust-inventory/`, and `migrate/` as one Go module plus one cargo crate, with the Go services' shared packages in `internal/`; `k8s/` holds the manifests (`apps/base` for the services and their migration Jobs, `infra/` for the namespace and PostgreSQL, Forgejo, Flux, monitoring, and Flagsmith); `scenarios/` holds the failure scenarios and their kustomize overlays; `scripts/` holds bring-up, teardown, build, smoke, and validation; `docs/` holds the topology, service, and scenario pages.
 
 ## Build and test
 

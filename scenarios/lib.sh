@@ -182,7 +182,7 @@ scenario_push_overlay() {
         return 0
     fi
     git -c user.email="${SCENARIO_GIT_EMAIL}" -c user.name="${SCENARIO_GIT_NAME}" \
-        commit -q -m "${SCENARIO_ID}: apply the scenario overlay"
+        -c commit.gpgsign=false commit -q -m "${SCENARIO_ID}: apply the scenario overlay"
     echo "==> Pushing to Forgejo"
     git push -q origin main
 }

@@ -22,9 +22,13 @@ const (
 )
 
 type PriceRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ItemId        string                 `protobuf:"bytes,1,opt,name=item_id,json=itemId,proto3" json:"item_id,omitempty"`
-	Quantity      int32                  `protobuf:"varint,2,opt,name=quantity,proto3" json:"quantity,omitempty"`
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	ItemId   string                 `protobuf:"bytes,1,opt,name=item_id,json=itemId,proto3" json:"item_id,omitempty"`
+	Quantity int32                  `protobuf:"varint,2,opt,name=quantity,proto3" json:"quantity,omitempty"`
+	// The region of the warehouse the item ships from, for example eu-west.
+	// go-api sends it only while its orders.forward_region flag is on, and
+	// go-grpc prices by it only while its pricing.regional_currency flag is on.
+	Region        *string `protobuf:"bytes,3,opt,name=region,proto3,oneof" json:"region,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -71,6 +75,13 @@ func (x *PriceRequest) GetQuantity() int32 {
 		return x.Quantity
 	}
 	return 0
+}
+
+func (x *PriceRequest) GetRegion() string {
+	if x != nil && x.Region != nil {
+		return *x.Region
+	}
+	return ""
 }
 
 type PriceResponse struct {
@@ -154,10 +165,12 @@ var File_pricing_proto protoreflect.FileDescriptor
 const file_pricing_proto_rawDesc = "" +
 	"\n" +
 	"\rpricing.proto\x12\n" +
-	"pricing.v1\"C\n" +
+	"pricing.v1\"k\n" +
 	"\fPriceRequest\x12\x17\n" +
 	"\aitem_id\x18\x01 \x01(\tR\x06itemId\x12\x1a\n" +
-	"\bquantity\x18\x02 \x01(\x05R\bquantity\"\x95\x01\n" +
+	"\bquantity\x18\x02 \x01(\x05R\bquantity\x12\x1b\n" +
+	"\x06region\x18\x03 \x01(\tH\x00R\x06region\x88\x01\x01B\t\n" +
+	"\a_region\"\x95\x01\n" +
 	"\rPriceResponse\x12\x17\n" +
 	"\aitem_id\x18\x01 \x01(\tR\x06itemId\x12\x1a\n" +
 	"\bquantity\x18\x02 \x01(\x05R\bquantity\x12\x1d\n" +
@@ -200,6 +213,7 @@ func file_pricing_proto_init() {
 	if File_pricing_proto != nil {
 		return
 	}
+	file_pricing_proto_msgTypes[0].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{

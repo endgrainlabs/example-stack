@@ -10,6 +10,7 @@ import (
 
 	pb "github.com/endgrainlabs/example-stack/go-grpc/proto/echopb"
 	ppb "github.com/endgrainlabs/example-stack/go-grpc/proto/pricingpb"
+	"github.com/endgrainlabs/example-stack/internal/flags"
 )
 
 // The seeded inventory identifiers, which the scenarios and the smoke test
@@ -152,6 +153,81 @@ func TestGetPriceCurrencyFollowsRegionalPricing(t *testing.T) {
 		}
 	})
 }
+
+// fakeFlags stands in for the Flagsmith-backed source: the flags named in it
+// are on, every other one is off.
+type fakeFlags map[string]bool
+
+func (f fakeFlags) Enabled(name string) bool { return f[name] }
+
+// pricing.regional_currency prices an eu-west request in EUR, and nothing
+// else changes: not with the flag off, not without a region, not for a
+// region with no currency of its own.
+func TestGetPriceCurrencyFollowsTheRegionalCurrencyFlag(t *testing.T) {
+	withServiceConfig(t, "test-token", "")
+	ctx := authedContext("test-token")
+	on := fakeFlags{flagRegionalCurrency: true}
+
+	for _, tt := range []struct {
+		name   string
+		flags  flags.Source
+		region *string
+		want   string
+	}{
+		{"flag on, eu-west", on, ptr("eu-west"), "EUR"},
+		{"flag on, us-east", on, ptr("us-east"), "USD"},
+		{"flag on, no region", on, nil, "USD"},
+		{"flag on, empty region", on, ptr(""), "USD"},
+		{"flag off, eu-west", fakeFlags{}, ptr("eu-west"), "USD"},
+		{"no Flagsmith key, eu-west", flags.New(context.Background(), "", ""), ptr("eu-west"), "USD"},
+		{"no source at all, eu-west", nil, ptr("eu-west"), "USD"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &pricingServer{flags: tt.flags}
+			resp, err := s.GetPrice(ctx, &ppb.PriceRequest{ItemId: itemWest, Quantity: 1, Region: tt.region})
+			if err != nil {
+				t.Fatalf("GetPrice: %v", err)
+			}
+			if resp.Currency != tt.want {
+				t.Errorf("currency = %s, want %s", resp.Currency, tt.want)
+			}
+			if resp.UnitPrice != 33.34 {
+				t.Errorf("unit price = %v, want the item's usual 33.34", resp.UnitPrice)
+			}
+		})
+	}
+}
+
+// REGIONAL_PRICING, which scenario 3 sets, still applies with the flag off
+// or no region, and the flag's currency wins where both apply.
+func TestRegionalCurrencyFlagAndRegionalPricingTogether(t *testing.T) {
+	withServiceConfig(t, "test-token", "001=GBP")
+	ctx := authedContext("test-token")
+
+	for _, tt := range []struct {
+		name   string
+		flags  flags.Source
+		region *string
+		want   string
+	}{
+		{"flag off", fakeFlags{}, ptr("eu-west"), "GBP"},
+		{"flag on, no region", fakeFlags{flagRegionalCurrency: true}, nil, "GBP"},
+		{"flag on, eu-west", fakeFlags{flagRegionalCurrency: true}, ptr("eu-west"), "EUR"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			s := &pricingServer{flags: tt.flags}
+			resp, err := s.GetPrice(ctx, &ppb.PriceRequest{ItemId: itemEast, Quantity: 1, Region: tt.region})
+			if err != nil {
+				t.Fatalf("GetPrice: %v", err)
+			}
+			if resp.Currency != tt.want {
+				t.Errorf("currency = %s, want %s", resp.Currency, tt.want)
+			}
+		})
+	}
+}
+
+func ptr(s string) *string { return &s }
 
 func TestEcho(t *testing.T) {
 	withServiceConfig(t, "test-token", "")

@@ -1,0 +1,22 @@
+# The services' namespace, PostgreSQL, and Flagsmith. It depends on
+# monitoring because Flagsmith registers a ServiceMonitor, whose custom
+# resource definition the monitoring Kustomization installs. Nothing depends
+# on it: Flux checks dependsOn on every reconcile, so an apps that depended on
+# infra would stop reconciling whenever Flagsmith is down. setup.sh orders the
+# two at bring-up instead, by applying apps only once infra is Ready.
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: infra
+  namespace: flux-system
+spec:
+  interval: 5m
+  dependsOn:
+    - name: monitoring
+  sourceRef:
+    kind: GitRepository
+    name: example-stack
+  path: ./k8s/infra/base
+  prune: true
+  wait: true
+  timeout: 10m

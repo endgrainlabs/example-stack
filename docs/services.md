@@ -29,6 +29,11 @@ currency, and writing the order to PostgreSQL.
 `go-api` depends on `http://rust-inventory:8081` for inventory stock,
 `go-grpc:9090` for pricing, and the `orders` database.
 
+`go-api` reads one feature flag, `orders.forward_region`. While it is on
+and the inventory item carries a `region`, the pricing request includes
+that region. While it is off, or the item carries none, the request never
+names a region. The USD check does not change with it.
+
 Notable status codes
 
 - 401 without a token
@@ -88,6 +93,12 @@ whose identifier ends in that suffix in that currency. It is empty by
 default, so every price is USD. Scenario 3 sets it, which breaks
 `go-api`'s USD assumption.
 
+`GetPrice` takes an optional `region`. `go-grpc` reads one feature flag,
+`pricing.regional_currency`: while it is on, a request whose region is
+`eu-west` is priced in EUR, whatever `REGIONAL_PRICING` says. While it
+is off, or the request names no region or another one, the currency is
+what `REGIONAL_PRICING` gives.
+
 What a careful observer can check
 
 - Health returns `SERVING`, and uptime increases between calls, which
@@ -140,6 +151,13 @@ Seed data, also from the migration Job
 | `a0000000-0000-0000-0000-000000000002` | Gadget | 50 | west |
 | `a0000000-0000-0000-0000-000000000003` | Sprocket | 200 | east |
 
+`rust-inventory` reads one feature flag, `inventory.expose_region`.
+While it is on, each item in the list and get responses carries a
+`region` derived from its warehouse: `east` is `us-east` and `west` is
+`eu-west`, and a warehouse with neither gets no field. While it is off
+the responses are byte for byte what they are without the flag. The
+create response never carries one.
+
 What a careful observer can check
 
 - Health returns 200 whatever the database is doing; readiness returns
@@ -185,7 +203,12 @@ infrastructure interface with the ports this stack uses.
 ## PostgreSQL and the migrations
 
 There is a single PostgreSQL 17 Deployment that holds every database in the
-stack. `inventory` is created by the image's own initialization; `orders` and
+stack. Its manifests are in `k8s/infra/postgres`, and the `infra`
+Kustomization reconciles them with the `example-stack` namespace and
+Flagsmith, ahead of the services and their migration Jobs, which the
+`apps` Kustomization reconciles. It has its own `postgres` Secret rather
+than a key in `example-secrets`, which belongs to `apps`: the database
+comes up before that Secret exists. `inventory` is created by the image's own initialization; `orders` and
 `flagsmith` are created by an initialization script mounted from a ConfigMap,
 which the image runs only against an empty data directory, so they appear on
 a fresh volume and not on a restart. Data is on a 100Mi local-path volume,
@@ -221,8 +244,8 @@ migration Jobs run. Those restarts show up in
 ## Flagsmith
 
 Flagsmith is a self-hosted feature flag server, deployed by Flux from
-`k8s/infra/flagsmith` into its own `flagsmith` namespace the way the
-monitoring stack is. It is the unified image, so one container serves both
+`k8s/infra/flagsmith` into its own `flagsmith` namespace, as part of the
+`infra` Kustomization. It is the unified image, so one container serves both
 the API and the web interface on port 8000, reachable at
 `http://flagsmith.localhost:8090/`. Its schema lives in the `flagsmith`
 database in the shared PostgreSQL and is applied by the
@@ -235,19 +258,35 @@ database in the shared PostgreSQL and is applied by the
 | `GET /metrics/` on port 9100 | No | Prometheus metrics, from a second HTTP server in the same process. A `ServiceMonitor` registers it |
 | `/api/v1/...` | Yes | The Flagsmith REST API. `Authorization: Token <key>` for the admin API, `X-Environment-Key: <key>` for the SDK endpoints |
 
-`scripts/setup.sh` seeds it after Flux has reconciled it: a bootstrap account,
-an organization and a project both named `example-stack`, and exactly two
-environments, `staging` and `production`. No feature flags are created, and
-no service in this stack reads a flag yet.
+`scripts/setup.sh` seeds it after Flux has reconciled it and before the
+services are applied: a bootstrap account, an organization and a project both
+named `example-stack`, exactly two environments, `staging` and `production`,
+a server-side key named `example-stack` in each environment, and the three
+features the services read, `inventory.expose_region`,
+`orders.forward_region`, and `pricing.regional_currency`. The features are
+created off in both environments, and a re-run of `setup.sh` turns them off
+again, so it leaves the stack at its baseline.
 
 The two environments' client-side keys are written into a
 `flagsmith-bootstrap` Secret in the `example-stack` namespace, under the keys
-`staging` and `production`, alongside the bootstrap account's API token under
-`admin-token`. Flagsmith generates all three at seed time, so they cannot live
+`staging` and `production`, their server-side keys under `staging-server` and
+`production-server`, and the bootstrap account's API token under
+`admin-token`. Flagsmith generates all five at seed time, so they cannot live
 in the manifests Flux reconciles; `setup.sh` writes the Secret with
 `kubectl`. Flux prunes only what it applied, so a reconcile leaves the Secret
 alone, and the `app.kubernetes.io/managed-by` label on it records which script
-owns it. Nothing mounts it yet.
+owns it. The three services read `production-server` from it, and
+`validate-stack.sh` reads the four environment keys to check the seed.
+
+The admin token and the server-side keys are credentials, not identifiers.
+The admin token acts as the bootstrap account, an organization administrator.
+A server-side key reads its environment's whole document, every flag and
+segment rule in it, including flags marked server-side only, which a
+client-side key cannot read. Like every value in this stack they are
+demo-only. Anyone who can read Secrets in the `example-stack` namespace can
+read all five, and the server-side production key is also in the environment
+of the `go-api`, `go-grpc`, and `rust-inventory` containers, so anyone who can
+exec into those pods or read their environment can read it too.
 
 The dashboard reads its own feature flags from a Flagsmith project too, the
 vendor's hosted one by default. The seed creates a second organization and
@@ -266,6 +305,54 @@ The bootstrap login is `bootstrap@flagsmith.local` with the password
 demo-only credential like every other one in this stack. Flagsmith runs
 Django's password validators on signup, so a short or common password is
 rejected.
+
+## Feature flags
+
+Each service reads one flag from the `production` environment of the
+`example-stack` project in Flagsmith.
+
+| Flag | Service | While it is on |
+|---|---|---|
+| `inventory.expose_region` | `rust-inventory` | list and get items carry a `region`: `us-east` for `east`, `eu-west` for `west` |
+| `orders.forward_region` | `go-api` | the pricing request carries the inventory item's region |
+| `pricing.regional_currency` | `go-grpc` | a price request for `eu-west` is priced in EUR |
+
+Each flag is inert alone, and so is every pair: `go-grpc` sees a region
+only when both of the others are on, and with only its own flag on no
+request names one. With all three on, an order for Gadget, the `west`
+warehouse item, is priced in EUR and `go-api` answers 422, the symptom
+scenario 3 produces through `REGIONAL_PRICING`, from a different cause.
+Orders for Widget and Sprocket, both `east`, still succeed. With any
+flag off every order is priced in USD.
+
+`go-api` and `go-grpc` use Flagsmith's server-side Go SDK,
+`flagsmith-go-client`, wrapped once in `internal/flags`, in local
+evaluation mode. `rust-inventory` reads the same environment document
+with a client of its own, `src/flags.rs`, on a thread that copies each
+flag's on/off state into a snapshot the request handlers read: the
+`flagsmith` crate at 3.1.1 holds its lock across the refresh request and
+panics on a document it cannot parse, and its TLS stack needs a C
+toolchain in the image build, so the stack does without it. It
+evaluates no segments, identities, or multivariate values, which the
+stack's flags do not use. Each service fetches its environment's
+document from the in-cluster API, `FLAGSMITH_API_URL`, which is
+`http://flagsmith.flagsmith.svc.cluster.local:8000/api/v1/`, every ten
+seconds, and evaluates flags against that copy, so a request never waits
+on Flagsmith. There is no real-time channel: a change made in the
+dashboard reaches a service within about ten seconds.
+
+The key is `FLAGSMITH_SERVER_KEY`, read from the `production-server` key
+of the `flagsmith-bootstrap` Secret through an optional reference.
+Flagsmith serves the environment document only to a server-side key, so
+a service whose key is missing, empty, or client-side makes no request
+and reads every flag as off. A service reads every flag as off, too, until its first
+fetch succeeds, which is the case while Flagsmith is unreachable at
+startup. Once a fetch has succeeded, an unreachable Flagsmith leaves the
+last document in place, so the flags keep the values they had. A flag
+the document does not name is off.
+
+`setup.sh` applies the services only after the seed has written the key,
+so on a fresh cluster they start with it and need no restart.
 
 ## How the services are built
 

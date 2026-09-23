@@ -18,6 +18,7 @@ import (
 
 	pb "github.com/endgrainlabs/example-stack/go-grpc/proto/echopb"
 	ppb "github.com/endgrainlabs/example-stack/go-grpc/proto/pricingpb"
+	"github.com/endgrainlabs/example-stack/internal/flags"
 	"github.com/grpc-ecosystem/go-grpc-middleware/v2/interceptors/recovery"
 	grpcprom "github.com/grpc-ecosystem/go-grpc-prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -76,6 +77,16 @@ func currencyFor(rules []pricingRule, itemID string) string {
 	return "USD"
 }
 
+// flagRegionalCurrency prices a request by the region it names.
+const flagRegionalCurrency = "pricing.regional_currency"
+
+// regionalCurrencies is the currency each region prices in while
+// pricing.regional_currency is on. A region not listed keeps the currency
+// the item would otherwise get.
+var regionalCurrencies = map[string]string{
+	"eu-west": "EUR",
+}
+
 type echoServer struct {
 	pb.UnimplementedEchoServiceServer
 }
@@ -102,6 +113,18 @@ func (s *echoServer) Health(ctx context.Context, req *pb.HealthRequest) (*pb.Hea
 
 type pricingServer struct {
 	ppb.UnimplementedPricingServiceServer
+	// flags may be nil, which reads every flag as off.
+	flags flags.Source
+}
+
+// currency is the currency a request is priced in: the REGIONAL_PRICING rule
+// for its item, unless pricing.regional_currency is on and the request names
+// a region that has a currency of its own.
+func (s *pricingServer) currency(req *ppb.PriceRequest) string {
+	if c, ok := regionalCurrencies[req.GetRegion()]; ok && flags.On(s.flags, flagRegionalCurrency) {
+		return c
+	}
+	return currencyFor(pricingRules, req.GetItemId())
 }
 
 func (s *pricingServer) GetPrice(ctx context.Context, req *ppb.PriceRequest) (*ppb.PriceResponse, error) {
@@ -123,7 +146,7 @@ func (s *pricingServer) GetPrice(ctx context.Context, req *ppb.PriceRequest) (*p
 		Quantity:  req.Quantity,
 		UnitPrice: unitPrice,
 		Total:     total,
-		Currency:  currencyFor(pricingRules, req.ItemId),
+		Currency:  s.currency(req),
 	}, nil
 }
 
@@ -201,7 +224,7 @@ func main() {
 		),
 	)
 	pb.RegisterEchoServiceServer(srv, &echoServer{})
-	ppb.RegisterPricingServiceServer(srv, &pricingServer{})
+	ppb.RegisterPricingServiceServer(srv, &pricingServer{flags: flags.FromEnv(context.Background())})
 	reflection.Register(srv)
 	grpcprom.Register(srv)
 

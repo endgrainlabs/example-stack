@@ -1,0 +1,10 @@
+# What the infra Flux Kustomization reconciles: the services' namespace, the
+# PostgreSQL that every database in the stack lives in, and Flagsmith. The
+# namespace is declared here and nowhere else, so the apps Kustomization can
+# be repointed or broken by a scenario without taking the database with it.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - namespace.yaml
+  - ../postgres
+  - ../flagsmith

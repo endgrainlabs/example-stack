@@ -48,8 +48,8 @@ spec:
             - name: POSTGRES_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: example-secrets
-                  key: postgres-password
+                  name: postgres
+                  key: password
             - name: POSTGRES_DB
               value: inventory
             # Demo-only: trust auth on a throwaway local database, so any

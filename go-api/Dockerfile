@@ -17,6 +17,7 @@ RUN --mount=type=cache,id=example-stack-go-cache,target=/go/pkg/mod \
     go mod download
 COPY go-api/ ./go-api/
 COPY go-grpc/proto/pricingpb/ ./go-grpc/proto/pricingpb/
+COPY internal/ ./internal/
 RUN --mount=type=cache,id=example-stack-go-cache,target=/go/pkg/mod \
     --mount=type=cache,id=example-stack-go-build,target=/root/.cache/go-build \
     CGO_ENABLED=0 go build -o /go-api ./go-api
