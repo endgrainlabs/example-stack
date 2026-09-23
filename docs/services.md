@@ -210,8 +210,9 @@ filesystem directory after the embedded set, against the same
 `goose_db_version` table, which is how scenario 2 adds a migration
 without a variant image. Job names carry a version suffix: when
 migration content changes, the suffix is bumped, so Flux creates a new
-Job and leaves the completed one alone. Finished Jobs are
-garbage-collected after ten minutes.
+Job and leaves the completed one alone. Completed Jobs stay: a TTL would
+delete them, and Flux would re-create and re-run them on its next
+reconcile.
 
 On a fresh cluster the services may restart once or twice while the
 migration Jobs run. Those restarts show up in

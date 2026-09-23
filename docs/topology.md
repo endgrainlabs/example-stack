@@ -190,8 +190,7 @@ A single PostgreSQL Deployment holds all three databases.
 `rust-inventory` owns `inventory`, `go-api` owns `orders`, and the
 Flagsmith server in its own namespace owns `flagsmith`. No service
 creates its own schema. Migration Jobs do this before the services need
-it. `go-api` and `rust-inventory` fail at startup if the schema is
-missing; Flagsmith stays unready until its Job has run.
+it, and a service fails at startup if the schema is missing.
 
 Data resides on a 100Mi local-path volume. It survives pod restarts and
 `k3d cluster stop`, and is lost on `k3d cluster delete`, which is what

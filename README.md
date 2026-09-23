@@ -301,7 +301,7 @@ There are four layers of testing. All exit non-zero on failure.
   run the `rust-inventory` handlers that answer before a query: authentication,
   request validation, and liveness.
 - **`scripts/smoke-test.sh`** checks service behavior on a live stack:
-  migration Jobs succeeded or already garbage-collected, health and readiness,
+  migration Jobs succeeded, health and readiness,
   authentication rejection, the seeded inventory, order creation across the
   full call graph, insufficient stock, an unknown item, and the UI proxy paths.
 - **`scripts/validate-stack.sh`** checks the infrastructure: pod health,

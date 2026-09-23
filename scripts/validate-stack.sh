@@ -172,17 +172,12 @@ check_pods "${NAMESPACE}" "app=postgres" "postgres"
 echo ""
 echo "==> Migration jobs"
 
-# Finished Jobs are garbage-collected ten minutes after completion; a missing
-# Job is not a failure, and the seed data the smoke test checks is the proof
-# the migration ran.
+# Nothing deletes a completed Job, so a missing one means Flux never applied
+# it.
 check_job() {
     local ns="$1"
     local name="$2"
     local succeeded
-    if ! kubectl -n "${ns}" get job "${name}" >/dev/null 2>&1; then
-        pass "${name} already garbage-collected"
-        return 0
-    fi
     succeeded=$(kubectl -n "${ns}" get job "${name}" -o jsonpath='{.status.succeeded}' 2>/dev/null || echo "0")
     if [ "${succeeded}" = "1" ]; then
         pass "${name} succeeded"
