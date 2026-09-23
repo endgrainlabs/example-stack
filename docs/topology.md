@@ -138,10 +138,12 @@ declared in `infra` alone, so nothing a scenario does to `apps` can
 prune it. Flagsmith's migration Job starts in the same reconcile as
 PostgreSQL and retries until the database answers.
 
-A failure scenario works in the same way. It clones the Forgejo
+Failure scenarios 1 to 3 work in the same way. Each clones the Forgejo
 repository, commits an overlay, pushes, and patches the `apps`
 Kustomization to point at the overlay path. Reverting points the path
-back at `./k8s/apps/base`.
+back at `./k8s/apps/base`. Scenario 4 goes around this path: it turns
+feature flags on through Flagsmith's API, so Forgejo and Flux see no
+change.
 
 ## The monitoring stack
 

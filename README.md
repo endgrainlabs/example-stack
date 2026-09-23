@@ -35,7 +35,7 @@ is self-contained after startup (see [Prerequisites](#prerequisites) and
     environment and refreshed every ten seconds; see
     [docs/services.md](docs/services.md#feature-flags)
 - A local image registry that the cluster pulls from.
-- Three failure scenarios that break the stack in a specific way and revert.
+- Four failure scenarios that break the stack in a specific way and revert.
 
 This is how they are organized in the repository
 
@@ -265,15 +265,17 @@ kubectl -n forgejo exec deploy/forgejo -- \
 
 ## Failure scenarios
 
-Each failure scenario pushes a kustomize overlay to Forgejo, which Flux
-then reconciles. Each scenario is reverted by running its associated script
-with `--reset`.
+Scenarios 1 to 3 push a kustomize overlay to Forgejo, which Flux then
+reconciles. Scenario 4 turns feature flags on through Flagsmith's API and
+changes nothing in Git. Each scenario is reverted by running its associated
+script with `--reset`.
 
 | Scenario | Description |
 |---|---|
 | broken service port (1) | The `go-grpc` Service targets the wrong port. The pod stays healthy, the traffic is dropped, `go-api` order creation returns 502. |
 | bad migration (2) | A migration renames a column. The Job succeeds, and `rust-inventory` queries start returning 500. |
 | invalid pricing assumption (3) | `go-grpc` returns a different currency for one warehouse. Both services are healthy, and orders for that warehouse fail with 422. |
+| feature flag triple (4) | Three Flagsmith flags, one per service, each inert alone, together price the `west` warehouse item in EUR, and its orders fail with 422. Forgejo and Flux show no change, and no alert fires. |
 
 To run scenario 1 and revert to the baseline state, you'd execute
 ```sh

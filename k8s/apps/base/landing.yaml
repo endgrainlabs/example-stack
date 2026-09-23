@@ -56,11 +56,12 @@ data:
       <p><code>curl -H "Authorization: Bearer dev-token" http://rust.localhost:8090/api/v1/inventory</code></p>
 
       <h2 id="scenarios">Failure scenarios</h2>
-      <p>Each scenario pushes a kustomize overlay to Forgejo, Flux reconciles it, and <code>--reset</code> reverts it. Run them from a checkout of the repository.</p>
+      <p>Scenarios 1 to 3 push a kustomize overlay to Forgejo and Flux reconciles it; scenario 4 turns feature flags on through Flagsmith's API. <code>--reset</code> reverts each. Run them from a checkout of the repository.</p>
       <ul>
         <li><strong>1: broken service port</strong> - the <code>go-grpc</code> Service targets a port nothing listens on. The pod stays healthy, order creation returns 502.<br><code>bash scenarios/scenario-1-broken-service/demo.sh</code></li>
         <li><strong>2: bad migration</strong> - a migration renames the inventory <code>quantity</code> column. The Job succeeds, <code>rust-inventory</code> queries return 500.<br><code>bash scenarios/scenario-2-bad-migration/demo.sh</code></li>
         <li><strong>3: pricing assumption</strong> - <code>go-grpc</code> returns a different currency for one warehouse. Both services are healthy, orders for that warehouse return 422.<br><code>bash scenarios/scenario-3-pricing-assumption/demo.sh</code></li>
+        <li><strong>4: feature flag triple</strong> - three Flagsmith flags, one per service, are each inert alone and together price the west warehouse item in EUR. Orders for it return 422, Forgejo and Flux show no change, and no alert fires.<br><code>bash scenarios/scenario-4-feature-flag-triple/demo.sh</code></li>
       </ul>
 
       <h2>Scripts</h2>
